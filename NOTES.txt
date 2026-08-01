@@ -1,0 +1,82 @@
+TX_Beacon — нотатки по змінах прошивки
+=======================================
+
+=== 2026-07-29 — BLE багофікси (сесія 1) ===
+
+[БАГ] LED heartbeat не мигав правильно під час BLE
+  Файл: Core/Src/drv_led.c — LED_SetMode(): додано GPIO_SET на вхід
+  Файл: Core/Src/svc_uart_cmd.c — UartCmd_Wait(): додано LED_Update() в циклі
+
+[БАГ] BLE налаштування діяли тільки після ручного перезавантаження
+  Файл: Core/Src/cmd_layer.c — _op_reboot(): тепер зберігає конфіг перед reset
+  GUI: _on_ble_apply() → після успіху чекає 150мс → reboot → disconnect 600мс
+
+[БАГ] Кнопка gekon — triple-press не запускала BLE
+  Файл: Core/Src/main.c — пропуск TX якщо s_gcnt > 0 (перше пробудження)
+  Файл: Core/Src/main.c — прибрано LED_Blink() в gekon handler (блокував 300мс)
+  Вікно між натисканнями: 1.5 сек
+
+[БАГ] BLE op_mode — тільки одне значення, не можна комбінувати
+  Файл: STM32_WPAN/App/app_ble.h — enum → bitmask defines:
+    BLE_OP_OFF=0x00, BLE_OP_CONTINUOUS=0x01, BLE_OP_SCHEDULE=0x02, BLE_OP_GEKON=0x04
+  УВАГА: GEKON змінився з 3 → 4 (потрібна міграція конфігу — переналаштувати з GUI)
+  SCHEDULE+GEKON=0x06 — валідна комбінація
+
+[БАГ] LED конфіг перезаписувався у флеш під час BLE
+  Файл: Core/Src/flash_config.c — додано g_led_mode глобал; _build_v2() використовує
+  g_led_mode (а не LED_GetMode() який повертав HEARTBEAT під час BLE)
+
+[БАГ] UART адаптер від'єднувався на Windows при збереженні BLE
+  Файл: Core/Src/proto_uart.c — HAL_Delay(20) → HAL_Delay(200) перед reset
+  GUI: порт закривається за 150мс, MCU reset за 200мс
+
+---
+
+=== 2026-07-29 — BLE розклад без UART (сесія 2) ===
+
+ПРОБЛЕМА: При BLE розкладі 5с/5с і відключеному UART — тільки перша сесія
+працювала, далі зависало. Струм між сесіями ~440 мкА замість ~7 мкА.
+
+ПРИЧИНА 1: CPU2 залишався в Run між сесіями (не переходив у низьке споживання)
+ПРИЧИНА 2: МК спав до 3600с і пропускав наступні BLE вікна
+
+[ФІК 1] STM32_WPAN/App/app_ble.c — _StopSession_internal()
+  Після зупинки advertising — CPU2 іде в Stop1 (~5 мкА):
+    LL_C2_PWR_SetPowerMode(LL_PWR_MODE_STOP1);
+  CPU2 зберігає RAM і BLE стек, прокидається автоматично по IPCC від CPU1.
+
+[ФІК 2] Core/Src/main.c — TX_MODE_OFF
+  Сон обмежений до g_ble_interval_s якщо активний BLE розклад:
+    uint32_t sleep_s = _off_sleep_secs();
+    if (BLE_SCHEDULE && g_ble_interval_s < sleep_s)
+        sleep_s = g_ble_interval_s;
+    Power_EnterStop2(sleep_s);
+
+[ФІК 3] Core/Src/main.c — TX_MODE_PULSE і TX_MODE_ECO (schedule gate)
+  sl (сон до наступного TX вікна) теж обмежений до g_ble_interval_s:
+    if (BLE_SCHEDULE && g_ble_interval_s < sl)
+        sl = g_ble_interval_s;
+
+СТАТУС: зібрано (79892 байт), не прошито/не перевірено.
+
+---
+
+=== Відомі нюанси ===
+
+- CPU2 (BLE стек): після першої сесії залишається живим (s_cpu2_initialized=1)
+  Повторні сесії — тільки рестарт advertising, без повної реініціалізації.
+  Причина: C2BOOT після першого TL_Enable() не можна скинути апаратно.
+
+- BLE_ForceShutdown() — повністю вбиває CPU2. Викликати перед Power_EnterShutdown().
+
+- Gekon подвійне натискання (підряд, через Stop1):
+  Лічильник s_gcnt зберігається між пробудженнями.
+  Скидається якщо g_wakeup_reason != WAKEUP_GEKON.
+
+- Flash page = 2048 байт (не 1024!). Конфіг на сторінці 60 (0x0801E000).
+
+- Stop2 на WB15xx не підтримується — використовується Stop1 (~2-7 мкА CPU1).
+  Назва Power_EnterStop2() збережена для сумісності API.
+
+- Акселерометр wake-on-motion — ще не реалізовано (Фаза 2).
+  Коли додамо LIS2DW12 INT — варто зробити нормальний PM Lock (флагова система).

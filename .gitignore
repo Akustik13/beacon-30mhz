@@ -1,0 +1,81 @@
+# ── Build artifacts ───────────────────────────────────────────────────────────
+Debug/
+Release/
+*/Debug/
+*/Release/
+*.elf
+*.hex
+*.bin
+*.map
+*.lst
+*.d
+*.o
+*.su
+*.cyclo
+
+# ── STM32CubeIDE / Eclipse ────────────────────────────────────────────────────
+.settings/
+.agents/
+.claude/
+.cproject
+.project
+*.mxproject
+mx.scratch
+Beacon_30MHz Debug.cfg
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ── Flutter / Dart ────────────────────────────────────────────────────────────
+flutter_app/build/
+flutter_app/.dart_tool/
+flutter_app/.flutter-plugins
+flutter_app/.flutter-plugins-dependencies
+flutter_app/.packages
+flutter_app/pubspec.lock
+android_app/build/
+android_app/.dart_tool/
+android_app/.flutter-plugins
+android_app/.flutter-plugins-dependencies
+
+# ── Backup / old versions ─────────────────────────────────────────────────────
+BLE_HR_p2p_Sensorbroken_2/
+BLE_HR_p2p_Sensor_backup_v1/
+BLE_HR_p2p_Sensor_backup_v1.zip
+BLE_HR_p2p_Sensor_broken_20260622_163704/
+BLE_HR_p2p_Sensor_fix_uart_hang/
+BLE_HR_p2p_Sensor_modified/
+flutter_app_v1_backup/
+flutter_app_v2_backup/
+TX_Beacon_backup_29-07-2026/
+TX_Beacon_BLE_fixed/
+TX_Beacon_v5_flash_fixed/
+"TX_Beacon 23-07-2026"/
+"TX_Beacon v4"/
+BleTempReader/
+TX_Test_30MHz/
+
+# ── Zip archives (backups) ────────────────────────────────────────────────────
+*.zip
+
+# ── Logs / runtime files ──────────────────────────────────────────────────────
+beacon_log.csv
+tx_beacon_settings*.json
+tx_beacon_settings.json
+*.log
+
+# ── Large downloaded example packs ───────────────────────────────────────────
+pdf/example/
+
+# ── PC app backups ────────────────────────────────────────────────────────────
+pc_app/*_backup*.py
+pc_app/PROMPT_*.md
+pc_app/gui_v*.png
+pc_app/_ble_test.py
+
+# ── Misc ──────────────────────────────────────────────────────────────────────
+Thumbs.db
+.DS_Store
