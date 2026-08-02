@@ -19,50 +19,78 @@ class BeaconProvider extends ChangeNotifier {
   NusTransport? _t;
 
   // ── Current state ─────────────────────────────────────────────────────────
-  ConfigBlob? config;
-  StatusBlob? status;
-  InfoBlob?   info;
+  ConfigBlob?  config;
+  StatusBlob?  status;
+  InfoBlob?    info;
   BleSettings? bleSettings;
   Map<String, dynamic>? wakeCfg;
   List<Map<String, dynamic>> sensors = [];
 
-  bool  isBusy   = false;
-  bool  isRefreshing = false;
+  bool    isBusy      = false;
+  bool    isRefreshing = false;
   String? lastError;
   String? fwVersion;
 
-  // ── Log ───────────────────────────────────────────────────────────────────
+  // ── Live chart history (status polling only — never touched by log download)
+  final List<ChartPoint> liveTempHistory  = [];
+  final List<ChartPoint> liveBatHistory   = [];
+  final List<ChartPoint> liveLightHistory = [];
+
+  // ── Downloaded log chart history (log download only — never touched by live)
+  final List<ChartPoint> logTempHistory   = [];
+  final List<ChartPoint> logBatHistory    = [];
+  final List<ChartPoint> logLightHistory  = [];
+  final List<ChartPoint> logAccelXHistory = [];
+  final List<ChartPoint> logAccelYHistory = [];
+  final List<ChartPoint> logAccelZHistory = [];
+
+  static const _histMax = 512;
+
+  // ── Log ──────────────────────────────────────────────────────────────────
   List<Map<String, dynamic>> logEntries = [];
   int  logUsed  = 0;
   int  logTotal = 0;
   int  logFmtVer = 1;
-  bool isDownloadingLog = false;
+  bool isDownloadingLog  = false;
   double downloadProgress = 0.0;
 
-  // ── Chart history ─────────────────────────────────────────────────────────
-  final List<ChartPoint> tempHistory   = [];
-  final List<ChartPoint> batHistory    = [];
-  final List<ChartPoint> lightHistory  = [];
-  final List<ChartPoint> accelXHistory = [];
-  final List<ChartPoint> accelYHistory = [];
-  final List<ChartPoint> accelZHistory = [];
+  // ── RTC time ─────────────────────────────────────────────────────────────
+  int?      beaconTimeS;         // unix timestamp from beacon RTC
+  DateTime? _beaconTimeReadAt;   // wall clock when beaconTimeS was last set
+  DateTime? get beaconTimeReadAt => _beaconTimeReadAt;
+  bool  timeSyncedOnConnect = false;
 
-  static const _histMax = 512;
+  // ── Derived state ─────────────────────────────────────────────────────────
+  bool get logCircular => config?.logOverflow == 1;
 
   Timer? _refreshTimer;
 
-  // ── Connect / Disconnect ──────────────────────────────────────────────────
+  // ── Connect / Disconnect ─────────────────────────────────────────────────
 
   void attach(NusTransport transport) {
     _t = transport;
-    config     = null;
-    status     = null;
-    info       = null;
+    config      = null;
+    status      = null;
+    info        = null;
     bleSettings = null;
-    wakeCfg    = null;
-    sensors    = [];
-    logEntries = [];
-    lastError  = null;
+    wakeCfg     = null;
+    sensors     = [];
+    logEntries  = [];
+    logUsed     = 0;
+    logTotal    = 0;
+    beaconTimeS = null;
+    _beaconTimeReadAt = null;
+    timeSyncedOnConnect = false;
+    lastError   = null;
+    liveTempHistory.clear();
+    liveBatHistory.clear();
+    liveLightHistory.clear();
+    logTempHistory.clear();
+    logBatHistory.clear();
+    logLightHistory.clear();
+    logAccelXHistory.clear();
+    logAccelYHistory.clear();
+    logAccelZHistory.clear();
     notifyListeners();
     _startAutoRefresh();
   }
@@ -75,7 +103,7 @@ class BeaconProvider extends ChangeNotifier {
     status  = null;
     info    = null;
     bleSettings = null;
-    logEntries = [];
+    logEntries  = [];
     notifyListeners();
   }
 
@@ -84,7 +112,7 @@ class BeaconProvider extends ChangeNotifier {
     _refreshTimer = Timer.periodic(const Duration(seconds: 5), (_) => refreshStatus());
   }
 
-  // ── Read operations ───────────────────────────────────────────────────────
+  // ── Read operations ──────────────────────────────────────────────────────
 
   Future<void> refreshAll() async {
     if (_t == null) return;
@@ -96,6 +124,8 @@ class BeaconProvider extends ChangeNotifier {
       _readInfo(),
       _readBleSettings(),
       _readSensors(),
+      _readLogInfo(),
+      _readBeaconTime(),
     ]);
     isRefreshing = false;
     notifyListeners();
@@ -108,9 +138,8 @@ class BeaconProvider extends ChangeNotifier {
   }
 
   Future<void> _readConfig() async {
-    try {
-      config = await _t!.readConfig();
-    } catch (e) { lastError = e.toString(); }
+    try { config = await _t!.readConfig(); }
+    catch (e) { lastError = e.toString(); }
   }
 
   Future<void> _readStatus() async {
@@ -118,9 +147,9 @@ class BeaconProvider extends ChangeNotifier {
       status = await _t!.readStatus();
       if (status != null) {
         final now = DateTime.now();
-        _addPoint(tempHistory,  now, status!.tempC);
-        _addPoint(batHistory,   now, status!.batMv.toDouble());
-        _addPoint(lightHistory, now, status!.lightRaw.toDouble());
+        _addLiveTempFiltered(now, status!.tempC);
+        _addLivePoint(liveBatHistory,   now, status!.batMv.toDouble());
+        _addLivePoint(liveLightHistory, now, status!.lightRaw.toDouble());
       }
     } catch (e) { lastError = e.toString(); }
   }
@@ -128,30 +157,77 @@ class BeaconProvider extends ChangeNotifier {
   Future<void> _readInfo() async {
     try {
       info = await _t!.readInfo();
-      if (info != null) {
-        fwVersion = info!.fwVersion;
-      }
+      if (info != null) fwVersion = info!.fwVersion;
     } catch (e) { lastError = e.toString(); }
   }
 
   Future<void> _readBleSettings() async {
-    try {
-      bleSettings = await _t!.cmdBleGet();
-    } catch (e) { lastError = e.toString(); }
+    try { bleSettings = await _t!.cmdBleGet(); }
+    catch (e) { lastError = e.toString(); }
   }
 
   Future<void> _readSensors() async {
+    try { sensors = await _t!.cmdSensorList(); }
+    catch (e) { lastError = e.toString(); }
+  }
+
+  Future<void> _readLogInfo() async {
     try {
-      sensors = await _t!.cmdSensorList();
+      final inf = await _t!.cmdLogInfo();
+      if (inf != null) {
+        logUsed   = inf['used']  as int;
+        logTotal  = inf['total'] as int;
+        logFmtVer = inf['fmt_ver'] as int;
+      }
     } catch (e) { lastError = e.toString(); }
   }
 
-  void _addPoint(List<ChartPoint> list, DateTime ts, double v) {
+  Future<void> _readBeaconTime() async {
+    try {
+      final ts = await _t!.cmdTimeGet();
+      if (ts != null) {
+        beaconTimeS = ts;
+        _beaconTimeReadAt = DateTime.now();
+        if (!timeSyncedOnConnect) {
+          final phoneNow = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+          if ((phoneNow - ts).abs() > 60) {
+            await _t!.cmdTimeSet(phoneNow);
+            beaconTimeS = phoneNow;
+            _beaconTimeReadAt = DateTime.now();
+            timeSyncedOnConnect = true;
+            _autoSyncDone = true;
+          }
+          timeSyncedOnConnect = true;
+        }
+      }
+    } catch (e) { lastError = e.toString(); }
+  }
+
+  // Whether we auto-synced time this session (for the one-time banner)
+  bool _autoSyncDone = false;
+  bool get autoSyncedTime => _autoSyncDone;
+  void clearAutoSyncFlag() { _autoSyncDone = false; }
+
+  void _addLivePoint(List<ChartPoint> list, DateTime ts, double v) {
     list.add(ChartPoint(ts, v));
     if (list.length > _histMax) list.removeAt(0);
   }
 
-  // ── Write operations ──────────────────────────────────────────────────────
+  void _addLiveTempFiltered(DateTime ts, double v) {
+    // Drop values outside plausible biological range
+    if (v < -20.0 || v > 80.0) return;
+    // Drop spikes > 8°C from the last reading
+    if (liveTempHistory.isNotEmpty &&
+        (v - liveTempHistory.last.value).abs() > 8.0) return;
+    _addLivePoint(liveTempHistory, ts, v);
+  }
+
+  void _addLogPoint(List<ChartPoint> list, DateTime ts, double v) {
+    list.add(ChartPoint(ts, v));
+    if (list.length > _histMax) list.removeAt(0);
+  }
+
+  // ── Write operations ─────────────────────────────────────────────────────
 
   Future<bool> writeConfig(ConfigBlob cfg) async {
     if (_t == null) return false;
@@ -215,6 +291,11 @@ class BeaconProvider extends ChangeNotifier {
     if (_t == null) return false;
     final unix = DateTime.now().millisecondsSinceEpoch ~/ 1000;
     final rc = await _t!.cmdTimeSet(unix);
+    if (rc == cmdOk) {
+      beaconTimeS = unix;
+      _beaconTimeReadAt = DateTime.now();
+      notifyListeners();
+    }
     return rc == cmdOk;
   }
 
@@ -224,23 +305,30 @@ class BeaconProvider extends ChangeNotifier {
     return true;
   }
 
-  // ── Log download ──────────────────────────────────────────────────────────
+  // ── Log download ─────────────────────────────────────────────────────────
 
   Future<void> downloadLog() async {
     if (_t == null) return;
-    isDownloadingLog = true;
-    downloadProgress = 0.0;
-    logEntries = [];
+    isDownloadingLog   = true;
+    downloadProgress   = 0.0;
+    logEntries         = [];
+    // Clear log-only chart history — do NOT touch live* history
+    logTempHistory.clear();
+    logBatHistory.clear();
+    logLightHistory.clear();
+    logAccelXHistory.clear();
+    logAccelYHistory.clear();
+    logAccelZHistory.clear();
     notifyListeners();
 
     try {
-      final info = await _t!.cmdLogInfo();
-      if (info == null) { isDownloadingLog = false; notifyListeners(); return; }
+      final inf = await _t!.cmdLogInfo();
+      if (inf == null) { isDownloadingLog = false; notifyListeners(); return; }
 
-      logUsed    = info['used'] as int;
-      logTotal   = info['total'] as int;
-      logFmtVer  = info['fmt_ver'] as int;
-      final recSize = info['rec_size'] as int;
+      logUsed    = inf['used']     as int;
+      logTotal   = inf['total']   as int;
+      logFmtVer  = inf['fmt_ver'] as int;
+      final recSize = inf['rec_size'] as int;
       if (logUsed == 0 || recSize == 0) {
         isDownloadingLog = false; notifyListeners(); return;
       }
@@ -261,7 +349,7 @@ class BeaconProvider extends ChangeNotifier {
           final m = parseLogRecord(slice, logFmtVer);
           if (m == null) continue;
           entries.add(m);
-          _dispatchToChart(m);
+          _dispatchToLogChart(m);
         }
 
         offset += recs;
@@ -279,22 +367,23 @@ class BeaconProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _dispatchToChart(Map<String, dynamic> m) {
+  // Write log record data ONLY to log* chart lists (never touches live*)
+  void _dispatchToLogChart(Map<String, dynamic> m) {
     final ts = m['ts'] != null
         ? DateTime.fromMillisecondsSinceEpoch((m['ts'] as int) * 1000)
         : DateTime.now();
     final tc = m['temp_c'];
-    if (tc != null) _addPoint(tempHistory, ts, (tc as num).toDouble());
+    if (tc != null) _addLogPoint(logTempHistory, ts, (tc as num).toDouble());
     final bmv = m['bat_mv'];
-    if (bmv != null) _addPoint(batHistory, ts, (bmv as num).toDouble());
+    if (bmv != null) _addLogPoint(logBatHistory, ts, (bmv as num).toDouble());
     final lr = m['light_raw'];
-    if (lr != null) _addPoint(lightHistory, ts, (lr as num).toDouble());
+    if (lr != null) _addLogPoint(logLightHistory, ts, (lr as num).toDouble());
     final ax = m['accel_x'];
     final ay = m['accel_y'];
     final az = m['accel_z'];
-    if (ax != null) _addPoint(accelXHistory, ts, (ax as num).toDouble());
-    if (ay != null) _addPoint(accelYHistory, ts, (ay as num).toDouble());
-    if (az != null) _addPoint(accelZHistory, ts, (az as num).toDouble());
+    if (ax != null) _addLogPoint(logAccelXHistory, ts, (ax as num).toDouble());
+    if (ay != null) _addLogPoint(logAccelYHistory, ts, (ay as num).toDouble());
+    if (az != null) _addLogPoint(logAccelZHistory, ts, (az as num).toDouble());
   }
 
   Future<bool> eraseLog() async {
@@ -302,17 +391,26 @@ class BeaconProvider extends ChangeNotifier {
     isBusy = true; notifyListeners();
     final rc = await _t!.cmdLogErase();
     final ok = rc == cmdOk;
-    if (ok) { logEntries = []; logUsed = 0; }
+    if (ok) {
+      logEntries = [];
+      logUsed    = 0;
+      logTempHistory.clear();
+      logBatHistory.clear();
+      logLightHistory.clear();
+      logAccelXHistory.clear();
+      logAccelYHistory.clear();
+      logAccelZHistory.clear();
+    }
     isBusy = false; notifyListeners();
     return ok;
   }
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
+  // ── Helpers ──────────────────────────────────────────────────────────────
 
-  double? get tempC => status?.tempC;
-  int?    get batMv => status?.batMv;
-  int?    get batPct => status?.batPct;
-  int?    get uptimeS => status?.uptimeS;
+  double? get tempC    => status?.tempC;
+  int?    get batMv    => status?.batMv;
+  int?    get batPct   => status?.batPct;
+  int?    get uptimeS  => status?.uptimeS;
   int?    get lightRaw => status?.lightRaw;
   bool    get txActive => status?.txActive == 1;
 

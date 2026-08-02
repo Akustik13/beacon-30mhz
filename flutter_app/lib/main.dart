@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'app_theme.dart';
@@ -7,9 +8,16 @@ import 'providers/ble_provider.dart';
 import 'providers/beacon_provider.dart';
 import 'providers/devices_provider.dart';
 import 'screens/main_screen.dart';
+import 'services/update_service.dart';
+import 'screens/widgets/update_dialog.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+    systemNavigationBarColor: Colors.transparent,
+    systemNavigationBarDividerColor: Colors.transparent,
+  ));
   runApp(
     MultiProvider(
       providers: [
@@ -28,9 +36,12 @@ class BeaconApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final themeMode = context.watch<AppProvider>().themeMode;
     return MaterialApp(
       title: 'Beacon Manager',
-      theme: buildAppTheme(),
+      theme:      buildLightTheme(),
+      darkTheme:  buildAppTheme(),
+      themeMode:  themeMode,
       debugShowCheckedModeBanner: false,
       home: const _InitWrapper(),
     );
@@ -65,7 +76,23 @@ class _InitWrapperState extends State<_InitWrapper> {
     await context.read<AppProvider>().init();
     await context.read<DevicesProvider>().load();
 
-    if (mounted) setState(() => _ready = true);
+    if (mounted) {
+      setState(() => _ready = true);
+      _scheduleAutoUpdateCheck();
+    }
+  }
+
+  Future<void> _scheduleAutoUpdateCheck() async {
+    final svc = UpdateService();
+    if (!await svc.shouldAutoCheck()) return;
+    await Future.delayed(const Duration(seconds: 3));
+    if (!mounted) return;
+    final release = await svc.checkForUpdate();
+    if (release == null || !mounted) return;
+    final current = await svc.currentVersion();
+    if (!mounted) return;
+    await UpdateDialog.show(context,
+        currentVersion: current, release: release, service: svc);
   }
 
   @override

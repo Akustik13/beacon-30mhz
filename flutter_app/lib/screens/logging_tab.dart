@@ -3,6 +3,8 @@ import 'package:provider/provider.dart';
 import '../providers/ble_provider.dart';
 import '../providers/beacon_provider.dart';
 import '../protocol/opcodes.dart';
+import '../protocol/config_blob.dart';
+import 'widgets/duration_input.dart';
 
 class LoggingTab extends StatefulWidget {
   const LoggingTab({super.key});
@@ -24,7 +26,13 @@ class _LoggingTabState extends State<LoggingTab> {
     sensorIdBatt:  true,
     sensorIdAccel: false,
   };
-  bool _localDirty = false;
+  bool _localDirty    = false;
+  bool _strategyDirty = false;
+
+  // Write strategy (from config blob)
+  int _logMode     = 0; // 0=always 1=on-change 2=adaptive
+  int _logOverflow = 1; // 0=stop 1=circular
+  int _logTsSource = 0; // 0=boot-seconds 1=RTC
 
   static const _sensorNames = {
     sensorIdTemp:  'Temperature',
@@ -47,7 +55,13 @@ class _LoggingTabState extends State<LoggingTab> {
     if (beacon.sensors.isNotEmpty && !_localDirty) {
       _loadFromBeacon(beacon);
     }
-    if (!context.watch<BleProvider>().isConnected) _localDirty = false;
+    if (beacon.config != null && !_strategyDirty) {
+      _loadStrategyFromConfig(beacon.config!);
+    }
+    if (!context.watch<BleProvider>().isConnected) {
+      _localDirty    = false;
+      _strategyDirty = false;
+    }
   }
 
   void _loadFromBeacon(BeaconProvider beacon) {
@@ -61,6 +75,14 @@ class _LoggingTabState extends State<LoggingTab> {
     setState(() {});
   }
 
+  void _loadStrategyFromConfig(ConfigBlob cfg) {
+    setState(() {
+      _logMode     = cfg.logMode;
+      _logOverflow = cfg.logOverflow;
+      _logTsSource = cfg.logTsSource;
+    });
+  }
+
   double _memoryDepthS(BeaconProvider beacon) {
     double writesPerS = 0;
     for (final id in _intervals.keys) {
@@ -70,15 +92,20 @@ class _LoggingTabState extends State<LoggingTab> {
       }
     }
     if (writesPerS == 0) return double.infinity;
-    final total = beacon.logTotal > 0 ? beacon.logTotal : 4096;
-    final used  = beacon.logUsed;
-    final free  = (total - used).clamp(0, total);
-    return free / writesPerS;
+    final total    = beacon.logTotal > 0 ? beacon.logTotal : logEntriesMax;
+    final used     = beacon.logUsed.clamp(0, total);
+    final circular = _logOverflow == 1;
+    // Circular: capacity = total (keeps last N seconds of history)
+    // Stop:     capacity = remaining free slots only
+    final capacity = circular ? total : (total - used).clamp(0, total);
+    return capacity / writesPerS;
   }
 
   Future<void> _applyAll() async {
     final beacon = context.read<BeaconProvider>();
     bool anyFail = false;
+
+    // Apply sensor intervals
     for (final id in _intervals.keys) {
       final en  = _enabled[id] == true;
       final okE = await beacon.setSensorEnabled(id, en);
@@ -88,8 +115,21 @@ class _LoggingTabState extends State<LoggingTab> {
         if (!okI) anyFail = true;
       }
     }
+
+    // Apply write strategy via config blob
+    if (_strategyDirty) {
+      final cfg = beacon.config;
+      if (cfg != null) {
+        cfg.logMode     = _logMode;
+        cfg.logOverflow = _logOverflow;
+        cfg.logTsSource = _logTsSource;
+        final ok = await beacon.writeConfig(cfg);
+        if (!ok) anyFail = true;
+      }
+    }
+
     if (mounted) {
-      setState(() => _localDirty = false);
+      setState(() { _localDirty = false; _strategyDirty = false; });
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(anyFail ? 'Some settings failed to apply' : 'Logging config applied'),
         backgroundColor: anyFail ? Colors.orange : Colors.green,
@@ -102,15 +142,14 @@ class _LoggingTabState extends State<LoggingTab> {
     final ble    = context.watch<BleProvider>();
     final beacon = context.watch<BeaconProvider>();
 
-    if (!ble.isConnected) {
-      return const Scaffold(body: Center(child: Text('Connect to a beacon first')));
-    }
-
     final depthS = _memoryDepthS(beacon);
     final depthStr = depthS.isInfinite ? '∞'
         : depthS < 3600 ? '${depthS.round()}s'
         : depthS < 86400 ? '${(depthS / 3600).toStringAsFixed(1)}h'
         : '${(depthS / 86400).toStringAsFixed(1)}d';
+    final circular  = _logOverflow == 1;
+    final total     = beacon.logTotal > 0 ? beacon.logTotal : logEntriesMax;
+    final usedDisp  = beacon.logUsed.clamp(0, total);
 
     return Scaffold(
       appBar: AppBar(
@@ -124,24 +163,153 @@ class _LoggingTabState extends State<LoggingTab> {
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(12),
-        child: Column(children: [
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+
+          // ── Offline banner ────────────────────────────────────────────────
+          if (!ble.isConnected)
+            Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.orange.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange.withOpacity(0.4)),
+              ),
+              child: const Row(children: [
+                Icon(Icons.bluetooth_disabled, size: 16, color: Colors.orange),
+                SizedBox(width: 8),
+                Expanded(child: Text('Not connected — connect to apply changes',
+                    style: TextStyle(fontSize: 13, color: Colors.orange))),
+              ]),
+            ),
+
           // Memory depth indicator
           Card(
             child: Padding(
               padding: const EdgeInsets.all(14),
-              child: Row(children: [
-                const Icon(Icons.memory, size: 32, color: Colors.indigo),
-                const SizedBox(width: 12),
-                Expanded(child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('Memory Depth', style: TextStyle(fontWeight: FontWeight.w600)),
-                    Text('Approx. $depthStr of free storage with current settings',
-                        style: Theme.of(context).textTheme.bodySmall),
-                    Text('${beacon.logUsed} / ${beacon.logTotal} records used',
-                        style: Theme.of(context).textTheme.labelSmall),
-                  ],
-                )),
+              child: Column(children: [
+                Row(children: [
+                  Icon(circular ? Icons.loop : Icons.stop_circle_outlined,
+                      size: 32,
+                      color: circular ? Colors.orange : Colors.indigo),
+                  const SizedBox(width: 12),
+                  Expanded(child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(circular ? 'Memory Depth (circular)' : 'Memory Depth',
+                          style: const TextStyle(fontWeight: FontWeight.w600)),
+                      Text(
+                        circular
+                            ? 'Keeps last $depthStr of history — overwrites oldest'
+                            : 'Fills in $depthStr, then stops recording',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      Text('$usedDisp / $total records used',
+                          style: Theme.of(context).textTheme.labelSmall),
+                    ],
+                  )),
+                ]),
+                const SizedBox(height: 10),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                    value: total > 0 ? (usedDisp / total).clamp(0.0, 1.0) : 0.0,
+                    minHeight: 7,
+                    backgroundColor: Colors.grey.withValues(alpha: 0.2),
+                    valueColor: AlwaysStoppedAnimation(
+                      circular ? Colors.orange
+                          : usedDisp / total.clamp(1, total) > 0.9 ? Colors.red
+                          : Colors.indigo),
+                  ),
+                ),
+              ]),
+            ),
+          ),
+          const SizedBox(height: 8),
+
+          // Write strategy card
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Row(children: [
+                  Icon(Icons.tune, size: 18),
+                  SizedBox(width: 8),
+                  Text('Write strategy', style: TextStyle(fontWeight: FontWeight.w600)),
+                ]),
+                const SizedBox(height: 12),
+
+                Text('Recording mode',
+                    style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                const SizedBox(height: 6),
+                Wrap(spacing: 8, children: [
+                  for (final e in const [
+                    [0, 'Every interval'],
+                    [1, 'On change'],
+                    [2, 'Adaptive'],
+                  ])
+                    ChoiceChip(
+                      label: Text(e[1] as String),
+                      selected: _logMode == e[0] as int,
+                      onSelected: (_) => setState(() {
+                        _logMode     = e[0] as int;
+                        _localDirty  = true;
+                        _strategyDirty = true;
+                      }),
+                    ),
+                ]),
+
+                const SizedBox(height: 12),
+                Text('When memory is full',
+                    style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                const SizedBox(height: 6),
+                Wrap(spacing: 8, children: [
+                  ChoiceChip(
+                    label: const Text('Stop recording'),
+                    selected: _logOverflow == 0,
+                    onSelected: (_) => setState(() {
+                      _logOverflow   = 0;
+                      _localDirty    = true;
+                      _strategyDirty = true;
+                    }),
+                  ),
+                  ChoiceChip(
+                    avatar: const Icon(Icons.loop, size: 14),
+                    label: const Text('Circular overwrite'),
+                    selected: _logOverflow == 1,
+                    onSelected: (_) => setState(() {
+                      _logOverflow   = 1;
+                      _localDirty    = true;
+                      _strategyDirty = true;
+                    }),
+                  ),
+                ]),
+
+                const SizedBox(height: 12),
+                Text('Timestamp source',
+                    style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                const SizedBox(height: 6),
+                Wrap(spacing: 8, children: [
+                  ChoiceChip(
+                    label: const Text('Seconds from boot'),
+                    selected: _logTsSource == 0,
+                    onSelected: (_) => setState(() {
+                      _logTsSource   = 0;
+                      _localDirty    = true;
+                      _strategyDirty = true;
+                    }),
+                  ),
+                  ChoiceChip(
+                    avatar: const Icon(Icons.access_time, size: 14),
+                    label: const Text('Real time (RTC)'),
+                    selected: _logTsSource == 1,
+                    onSelected: (_) => setState(() {
+                      _logTsSource   = 1;
+                      _localDirty    = true;
+                      _strategyDirty = true;
+                    }),
+                  ),
+                ]),
               ]),
             ),
           ),
@@ -160,47 +328,13 @@ class _LoggingTabState extends State<LoggingTab> {
 
           const SizedBox(height: 12),
           FilledButton.icon(
-            onPressed: (!beacon.isBusy && _localDirty) ? _applyAll : null,
+            onPressed: (ble.isConnected && !beacon.isBusy && _localDirty) ? _applyAll : null,
             icon: const Icon(Icons.check),
-            label: Text(_localDirty ? 'Apply' : 'No changes'),
+            label: Text(!ble.isConnected ? 'Connect to apply'
+                : _localDirty ? 'Apply' : 'No changes'),
           ),
-          const SizedBox(height: 8),
-
-          // Erase log button
-          OutlinedButton.icon(
-            style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
-            onPressed: beacon.isBusy ? null : () => _confirmErase(context, beacon),
-            icon: const Icon(Icons.delete_sweep),
-            label: const Text('Erase Log'),
-          ),
+          SizedBox(height: MediaQuery.of(context).padding.bottom + 24),
         ]),
-      ),
-    );
-  }
-
-  void _confirmErase(BuildContext ctx, BeaconProvider beacon) {
-    showDialog(
-      context: ctx,
-      builder: (_) => AlertDialog(
-        title: const Text('Erase log?'),
-        content: const Text('This will permanently delete all logged data.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () async {
-              Navigator.pop(ctx);
-              final ok = await beacon.eraseLog();
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                  content: Text(ok ? 'Log erased' : 'Erase failed'),
-                  backgroundColor: ok ? Colors.green : Colors.red,
-                ));
-              }
-            },
-            child: const Text('Erase'),
-          ),
-        ],
       ),
     );
   }
@@ -221,13 +355,6 @@ class _SensorCard extends StatelessWidget {
     required this.onEnabledChanged, required this.onIntervalChanged,
   });
 
-  // Preset intervals for the dropdown
-  static const _presets = [
-    (10, '10 s'), (30, '30 s'), (60, '1 min'), (120, '2 min'),
-    (300, '5 min'), (600, '10 min'), (1800, '30 min'), (3600, '1 h'),
-    (7200, '2 h'), (21600, '6 h'), (86400, '24 h'),
-  ];
-
   @override
   Widget build(BuildContext context) {
     return Card(
@@ -235,6 +362,7 @@ class _SensorCard extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(children: [
               Icon(icon, size: 22),
@@ -244,16 +372,17 @@ class _SensorCard extends StatelessWidget {
               Switch(value: enabled, onChanged: onEnabledChanged),
             ]),
             if (enabled) ...[
-              const SizedBox(height: 6),
+              const SizedBox(height: 8),
               Row(children: [
-                const SizedBox(width: 32),
-                const Text('Interval: ', style: TextStyle(fontSize: 13)),
-                DropdownButton<int>(
-                  value: _nearestPreset(interval),
-                  onChanged: (v) => onIntervalChanged(v!),
-                  isDense: true,
-                  items: _presets.map((p) => DropdownMenuItem(
-                    value: p.$1, child: Text(p.$2))).toList(),
+                const SizedBox(width: 10),
+                Text('Interval',
+                    style: Theme.of(context).textTheme.bodySmall),
+                const SizedBox(width: 12),
+                DurationInput(
+                  valueSeconds: interval,
+                  minSeconds: 1,
+                  maxSeconds: 86400,
+                  onChanged: onIntervalChanged,
                 ),
               ]),
             ],
@@ -263,13 +392,4 @@ class _SensorCard extends StatelessWidget {
     );
   }
 
-  int _nearestPreset(int v) {
-    int best = _presets.first.$1;
-    int bestDiff = (v - best).abs();
-    for (final p in _presets) {
-      final d = (v - p.$1).abs();
-      if (d < bestDiff) { best = p.$1; bestDiff = d; }
-    }
-    return best;
-  }
 }

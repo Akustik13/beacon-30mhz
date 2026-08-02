@@ -281,13 +281,29 @@ class NusTransport {
     }
   }
 
+  /// Called after every successful command response (rc != 0xFF).
+  /// BleProvider wires this to its inactivity-timer reset.
+  void Function()? onActivity;
+
   // Use _sendCmdParsed as the canonical sendCmd
-  Future<CmdResult> cmd(int opcode, {Uint8List? payload, Duration? timeout}) =>
-      _sendCmdParsed(opcode, payload: payload, timeout: timeout);
+  Future<CmdResult> cmd(int opcode,
+      {Uint8List? payload, Duration? timeout}) async {
+    final r = await _sendCmdParsed(opcode, payload: payload, timeout: timeout);
+    if (r.rc != 0xFF) onActivity?.call();
+    return r;
+  }
 
   // ── High-level commands ───────────────────────────────────────────────────
 
   Future<CmdResult> cmdPing() => cmd(opPing);
+
+  Future<int?> cmdTimeGet() async {
+    final r = await cmd(opTimeGet);
+    if (r.rc == cmdOk && r.data.length >= 4) {
+      return ByteData.sublistView(r.data).getUint32(0, Endian.little);
+    }
+    return null;
+  }
 
   Future<int> cmdTimeSet(int unixTs) async {
     final bd = ByteData(4)..setUint32(0, unixTs & 0xFFFFFFFF, Endian.little);
