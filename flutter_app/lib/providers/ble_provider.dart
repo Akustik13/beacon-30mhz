@@ -28,6 +28,15 @@ class BleProvider extends ChangeNotifier {
   StreamSubscription? _connSub;
   Timer? _rssiTimer;
 
+  // ── Auto-connect on scan ─────────────────────────────────────────────────
+  Set<String> _autoConnectMacs  = {};
+  bool        _autoConnectFired = false;
+
+  void setAutoConnectMacs(Set<String> macs) {
+    _autoConnectMacs  = Set.of(macs);
+    _autoConnectFired = false;
+  }
+
   // ── Auto-disconnect ───────────────────────────────────────────────────────
   static const int _kAutoDisconnectSec = 60;
   static const int _kWarningSec        = 10;
@@ -72,6 +81,21 @@ class BleProvider extends ChangeNotifier {
           _scanResults.add(ScannedDevice(r.device, name, r.rssi));
         }
         notifyListeners();
+
+        // Real-time auto-connect: stop scan and connect when a known device appears
+        if (_autoConnectMacs.isNotEmpty && !_autoConnectFired &&
+            !_isConnected && !_isConnecting) {
+          for (final d in _scanResults) {
+            if (_autoConnectMacs.contains(d.mac)) {
+              _autoConnectFired = true;
+              Timer.run(() async {
+                await stopScan();
+                await connect(d.device, d.name);
+              });
+              break;
+            }
+          }
+        }
       });
       await Future.delayed(Duration(seconds: timeoutSec));
     } catch (_) {}
@@ -91,6 +115,7 @@ class BleProvider extends ChangeNotifier {
   // ── Connect ───────────────────────────────────────────────────────────────
 
   Future<bool> connect(BluetoothDevice device, String name) async {
+    if (_isScanning) await stopScan();
     if (_isConnected) await disconnect();
     _isConnecting = true;
     _statusMsg = 'Connecting to $name…';

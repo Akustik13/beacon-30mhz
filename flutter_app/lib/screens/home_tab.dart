@@ -236,8 +236,7 @@ class _RtcTimeRowState extends State<_RtcTimeRow> {
               '${beaconNow.hour.toString().padLeft(2, '0')}:'
               '${beaconNow.minute.toString().padLeft(2, '0')}:'
               '${beaconNow.second.toString().padLeft(2, '0')}',
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
-                  fontFamily: 'monospace'),
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
             ),
           ]),
         ),
@@ -525,8 +524,11 @@ class _StorageBar extends StatelessWidget {
             style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
         const Spacer(),
         if (overwriting)
-          const Text('⟳ Circular overwrite active',
-              style: TextStyle(fontSize: 11, color: Colors.orange))
+          const Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(Icons.loop, size: 13, color: Colors.orange),
+            SizedBox(width: 3),
+            Text('Circular overwrite', style: TextStyle(fontSize: 11, color: Colors.orange)),
+          ])
         else
           Text(knownTotal ? '$used / $total records' : '— records',
               style: Theme.of(context).textTheme.labelSmall),

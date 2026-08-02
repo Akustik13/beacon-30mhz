@@ -38,11 +38,16 @@ class _MainScreenState extends State<MainScreen> {
 
   Future<void> _initialScan() async {
     if (!mounted) return;
-    final ble = context.read<BleProvider>();
+    final ble  = context.read<BleProvider>();
+    final app  = context.read<AppProvider>();
+    final devs = context.read<DevicesProvider>();
     if (ble.isConnected || ble.isScanning) return;
+    if (app.autoConnect && devs.devices.isNotEmpty) {
+      ble.setAutoConnectMacs(devs.devices.map((d) => d.mac).toSet());
+    }
     await ble.startScan(timeoutSec: 8);
     if (!mounted) return;
-    await _tryAutoConnect();
+    await _tryAutoConnect(); // fallback in case real-time didn't fire
     _setupContinuousScan();
   }
 
@@ -53,8 +58,13 @@ class _MainScreenState extends State<MainScreen> {
     if (!app.continuousScan) return;
     _continuousScanTimer = Timer.periodic(const Duration(seconds: 20), (_) async {
       if (!mounted) return;
-      final ble = context.read<BleProvider>();
+      final ble  = context.read<BleProvider>();
+      final app  = context.read<AppProvider>();
+      final devs = context.read<DevicesProvider>();
       if (ble.isConnected || ble.isScanning) return;
+      if (app.autoConnect && devs.devices.isNotEmpty) {
+        ble.setAutoConnectMacs(devs.devices.map((d) => d.mac).toSet());
+      }
       await ble.startScan(timeoutSec: 8);
       if (!mounted) return;
       await _tryAutoConnect();
