@@ -269,13 +269,19 @@ static uint8_t _op_log_info(uint8_t *out, uint8_t *out_len)
 {
     uint32_t total = 0U, free_cnt = 0U, used_b = 0U, free_b = 0U;
     FlashLog_GetStatus(&total, &free_cnt, &used_b, &free_b);
+    /* Cap 'readable' to LOG_ENTRIES_MAX: in circular mode total_records can exceed
+     * the ring capacity; sending the raw count confuses the download loop. */
+    uint32_t readable = (total > (uint32_t)LOG_ENTRIES_MAX) ? (uint32_t)LOG_ENTRIES_MAX : total;
     _put_u32(&out[0],  (uint32_t)LOG_ENTRIES_MAX);
-    _put_u32(&out[4],  total);
+    _put_u32(&out[4],  readable);
     _put_u32(&out[8],  free_cnt);
     _put_u32(&out[12], used_b);
     out[16] = LOG_ENTRY_SIZE;
     out[17] = LOG_FORMAT_VERSION_V2;
-    *out_len = 18U;
+    LogConfig_t lc;
+    FlashLog_GetConfig(&lc);
+    out[18] = lc.ts_source;  /* 0=LOG_TS_BOOT, 1=LOG_TS_RTC (epoch since 2000-01-01) */
+    *out_len = 19U;
     return CMD_OK;
 }
 

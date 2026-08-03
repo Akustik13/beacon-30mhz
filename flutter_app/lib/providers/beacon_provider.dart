@@ -346,7 +346,8 @@ class BeaconProvider extends ChangeNotifier {
       logUsed    = inf['used']     as int;
       logTotal   = inf['total']   as int;
       logFmtVer  = inf['fmt_ver'] as int;
-      final recSize = inf['rec_size'] as int;
+      final recSize  = inf['rec_size']  as int;
+      final tsSource = (inf['ts_source'] ?? 0) as int; // 0=BOOT, 1=RTC epoch2000
       if (logUsed == 0 || recSize == 0) {
         isDownloadingLog = false; notifyListeners(); return;
       }
@@ -367,7 +368,6 @@ class BeaconProvider extends ChangeNotifier {
           final m = parseLogRecord(slice, logFmtVer);
           if (m == null) continue;
           entries.add(m);
-          _dispatchToLogChart(m);
         }
 
         offset += recs;
@@ -375,6 +375,28 @@ class BeaconProvider extends ChangeNotifier {
         notifyListeners();
       }
 
+      // Fix timestamps before plotting.
+      // BOOT timestamps are seconds from last boot (resets to 0 each reboot) — anchor the
+      // last record to "now" so the chart shows real calendar time for the current session.
+      // RTC timestamps are seconds since 2000-01-01 00:00:00 (not Unix 1970 epoch) — add
+      // the 30-year offset so DateTime.fromMillisecondsSinceEpoch() returns correct dates.
+      if (entries.isNotEmpty) {
+        const epoch2000ToUnix = 946684800; // seconds from 1970-01-01 to 2000-01-01
+        if (tsSource == 1 /* LOG_TS_RTC */) {
+          for (final e in entries) {
+            final ts = (e['ts'] as int?) ?? 0;
+            e['ts'] = ts + epoch2000ToUnix;
+          }
+        } else /* LOG_TS_BOOT — anchor last record to now */ {
+          final lastTs = (entries.last['ts'] as int?) ?? 0;
+          final nowS   = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+          for (final e in entries) {
+            final ts = (e['ts'] as int?) ?? 0;
+            e['ts'] = nowS - (lastTs - ts);
+          }
+        }
+      }
+      for (final e in entries) _dispatchToLogChart(e);
       logEntries = entries;
     } catch (e) {
       lastError = e.toString();
