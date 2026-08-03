@@ -34,8 +34,16 @@
 
 /* ── v1 (legacy) ──────────────────────────────────────────────────────────── */
 #define FLASH_CONFIG_MAGIC  0xBEAC0001UL  /* v1 — 48-byte flat struct          */
-#define FLASH_CONFIG_PAGE   60U
-/* STM32WB1M (WB15): 2KB pages. Page 60 = 0x08000000 + 60*2048 = 0x0801E000 */
+
+/* Page location depends on flash layout:
+ *   OTA_LAYOUT (production, BLE light stack): config on page 90
+ *   default  (development, BLE full stack):   config on page 60
+ * Define OTA_LAYOUT in the Makefile (-DOTA_LAYOUT) when building with bootloader. */
+#ifdef OTA_LAYOUT
+  #define FLASH_CONFIG_PAGE   90U         /* after slots A/B and OTA meta       */
+#else
+  #define FLASH_CONFIG_PAGE   60U         /* original location                   */
+#endif
 #define FLASH_CONFIG_ADDR   (0x08000000UL + (uint32_t)(FLASH_CONFIG_PAGE) * 2048UL)
 
 /* ── v2 (current) ─────────────────────────────────────────────────────────── */
@@ -150,7 +158,9 @@ typedef struct __attribute__((packed)) {
 } TxConfigV2_t;
 _Static_assert(sizeof(TxConfigV2_t) == 256U, "TxConfigV2_t must be 256 bytes (32 double-words)");
 
+#ifndef OTA_LAYOUT
 _Static_assert(FLASH_CONFIG_ADDR == 0x0801E000UL, "Flash page/address mismatch");
+#endif
 
 typedef struct {
     uint32_t magic;

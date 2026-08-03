@@ -28,6 +28,7 @@
 #include "lis2dw12.h"
 #include "app_ble.h"
 #include "ble_beacon_service.h"
+#include "drv_ota.h"
 #include "proto_structs.h"
 #include "otp.h"
 #include "stm32wbxx_ll_rcc.h"
@@ -154,6 +155,15 @@ int main(void)
 
     SvcWake_Init();
     CmdLayer_Init();
+    OTA_Init();
+    /* Self-confirm: if we booted after a pending OTA update, commit it now.
+     * Called here — after config/sensors/BLE stack initialise without crash
+     * — which is the "basic sanity" the self-confirm protocol requires.
+     * If OTA_SelfConfirm() is never reached (crash, IWDG reset), the
+     * bootloader increments boot_attempts and eventually reverts to old slot. */
+#ifdef OTA_LAYOUT
+    OTA_SelfConfirm();
+#endif
 
     /* Account for time spent in Shutdown between sessions (RTC-based) */
     if (from_shutdown) {
