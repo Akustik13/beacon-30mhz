@@ -240,10 +240,8 @@ class _EventEditorPageState extends State<_EventEditorPage> {
         ),
         title: Text('Event ${widget.index + 1}'),
       ),
-      body: Column(
-        children: [
-        Expanded(child: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -346,31 +344,26 @@ class _EventEditorPageState extends State<_EventEditorPage> {
               onChanged: (v) => setState(() => _ev.oneShot = v!),
               title: const Text('One-shot (fire once, then disable)'),
             ),
+
+            const SizedBox(height: 24),
+
+            // ── Buttons ───────────────────────────────────────────────────
+            Row(children: [
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
+                onPressed: _clear,
+                icon: const Icon(Icons.delete_outline, size: 18),
+                label: const Text('Clear slot'),
+              ),
+              const Spacer(),
+              FilledButton.icon(
+                onPressed: _save,
+                icon: const Icon(Icons.check, size: 18),
+                label: const Text('Save'),
+              ),
+            ]),
           ],
         ),
-      )),
-
-      // ── Fixed bottom buttons ─────────────────────────────────────────────
-      SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-          child: Row(children: [
-            OutlinedButton.icon(
-              style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
-              onPressed: _clear,
-              icon: const Icon(Icons.delete_outline, size: 18),
-              label: const Text('Clear slot'),
-            ),
-            const Spacer(),
-            FilledButton.icon(
-              onPressed: _save,
-              icon: const Icon(Icons.check, size: 18),
-              label: const Text('Save'),
-            ),
-          ]),
-        ),
-      ),
-        ],
       ),
     );
   }
