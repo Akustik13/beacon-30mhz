@@ -40,9 +40,9 @@ class EventsTab extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               itemCount: maxEvents,
               itemBuilder: (ctx, i) => _EventCard(
+                key: ValueKey(i),
                 index: i,
                 event: beacon.events[i],
-                connected: connected,
               ),
             ),
           ),
@@ -96,11 +96,9 @@ class _OfflineBanner extends StatelessWidget {
 // ── Event card ────────────────────────────────────────────────────────────────
 
 class _EventCard extends StatelessWidget {
-  final int          index;
-  final BeaconEvent  event;
-  final bool         connected;
-  const _EventCard({super.key, required this.index, required this.event,
-      required this.connected});
+  final int         index;
+  final BeaconEvent event;
+  const _EventCard({super.key, required this.index, required this.event});
 
   @override
   Widget build(BuildContext context) {
@@ -108,80 +106,51 @@ class _EventCard extends StatelessWidget {
     final isEmpty = ev.condType == condDisabled && ev.actType == actNone;
     final cs      = Theme.of(context).colorScheme;
 
+    final badgeColor = ev.enabled ? cs.primaryContainer : cs.surfaceContainerHighest;
+    final badgeText  = ev.enabled ? cs.onPrimaryContainer : cs.onSurfaceVariant;
+
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       clipBehavior: Clip.antiAlias,
       child: ExpansionTile(
-        tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+        tilePadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
         childrenPadding: EdgeInsets.zero,
-        // Slot badge as leading
         leading: Container(
           width: 28, height: 28,
           decoration: BoxDecoration(
-            color: ev.enabled
-                ? cs.primaryContainer
-                : cs.surfaceContainerHighest,
+            color: badgeColor,
             borderRadius: BorderRadius.circular(6),
           ),
           alignment: Alignment.center,
-          child: Text('${index + 1}',
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 13,
-                color: ev.enabled
-                    ? cs.onPrimaryContainer
-                    : cs.onSurfaceVariant,
-              )),
+          child: Text(
+            '${index + 1}',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13,
+                color: badgeText),
+          ),
         ),
         title: isEmpty
-            ? Text('Empty slot — tap to configure',
+            ? Text('Empty — tap to configure',
                 style: TextStyle(color: cs.onSurfaceVariant,
                     fontStyle: FontStyle.italic, fontSize: 13))
             : Text('IF ${ev.condSummary}',
-                style: TextStyle(
-                    fontSize: 12,
+                style: TextStyle(fontSize: 12,
                     color: ev.enabled ? cs.onSurface : cs.onSurfaceVariant)),
         subtitle: isEmpty
             ? null
             : Text('→ ${ev.actSummary}',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                  color: ev.enabled ? cs.primary : cs.onSurfaceVariant,
-                )),
-        // Enable toggle in trailing (only if not empty)
-        trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-          if (!isEmpty)
-            Switch(
-              value: ev.enabled,
-              onChanged: (v) => _quickToggle(context, v),
-            ),
-          const Icon(Icons.expand_more), // ExpansionTile rotates this
-        ]),
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600,
+                    color: ev.enabled ? cs.primary : cs.onSurfaceVariant)),
         children: [
           Divider(height: 1, color: cs.outlineVariant),
           _EventEditor(
             index: index,
             initial: event,
-            onSave: (ev) => _save(context, ev),
-            onClear: () => _clear(context),
+            onSave:  (e) => context.read<BeaconProvider>().saveEvent(index, e),
+            onClear: ()  => context.read<BeaconProvider>().clearEvent(index),
           ),
         ],
       ),
     );
-  }
-
-  void _quickToggle(BuildContext ctx, bool val) {
-    final updated = event.copy()..enabled = val;
-    ctx.read<BeaconProvider>().saveEvent(index, updated);
-  }
-
-  void _save(BuildContext ctx, BeaconEvent ev) {
-    ctx.read<BeaconProvider>().saveEvent(index, ev);
-  }
-
-  void _clear(BuildContext ctx) {
-    ctx.read<BeaconProvider>().clearEvent(index);
   }
 }
 
@@ -261,7 +230,7 @@ class _EventEditorState extends State<_EventEditor> {
           if (!condNoValue.contains(_ev.condType)) ...[
             const SizedBox(width: 8),
             Expanded(
-              child: TextFormField(
+              child: TextField(
                 controller: _condValCtrl,
                 decoration: InputDecoration(
                   labelText: _condValueLabel(_ev.condType),
@@ -315,7 +284,7 @@ class _EventEditorState extends State<_EventEditor> {
         const SizedBox(height: 6),
         Row(children: [
           Expanded(
-            child: TextFormField(
+            child: TextField(
               controller: _coolCtrl,
               decoration: const InputDecoration(
                 labelText: 'Cooldown (TX cycles)',
@@ -461,7 +430,7 @@ class _NumField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return TextFormField(
+    return TextField(
       controller: ctrl,
       decoration: InputDecoration(
           labelText: label, hintText: hint,
