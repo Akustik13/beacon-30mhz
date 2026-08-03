@@ -245,13 +245,15 @@ int main(void)
                      * Stop1 overcounts uwTick on early IPCC wakeup (adds full ms \
                      * even when woken at 50ms) → session timeout fires 20× too fast. \
                      * WFI keeps SysTick running: HAL_GetTick() stays accurate, \
-                     * IPCC wakes CPU1 within 1 IRQ latency to service events. */ \
-                    uint32_t _ble_t0 = HAL_GetTick(); \
-                    uint32_t _ble_ms = (ms) < 1000U ? (ms) : 1000U; \
-                    while ((HAL_GetTick() - _ble_t0) < _ble_ms) { \
+                     * IPCC wakes CPU1 within 1 IRQ latency to service events. \
+                     * Loop runs the full ms; g_cfg_changed breaks early when new \
+                     * config arrives so the updated period takes effect immediately. */ \
+                    uint32_t _ble_end = HAL_GetTick() + (uint32_t)(ms); \
+                    while ((int32_t)(_ble_end - HAL_GetTick()) > 0) { \
                         BLE_ProcessEvents(); \
                         LED_Update(); \
                         if (BLE_IsIdle()) break; \
+                        if (g_cfg_changed) { g_cfg_changed = 0U; break; } \
                         __WFI(); \
                     } \
                 } \
@@ -732,12 +734,12 @@ int main(void)
                 if (g_ble_led_mode == BLE_LED_NORMAL) {
                     UartCmd_Wait(g_tx_period_ms);
                 } else {
-                    uint32_t _ble_t0 = HAL_GetTick();
-                    uint32_t _ble_ms = g_tx_period_ms < 1000U ? g_tx_period_ms : 1000U;
-                    while ((HAL_GetTick() - _ble_t0) < _ble_ms) {
+                    uint32_t _ble_end = HAL_GetTick() + g_tx_period_ms;
+                    while ((int32_t)(_ble_end - HAL_GetTick()) > 0) {
                         BLE_ProcessEvents();
                         LED_Update();
                         if (BLE_IsIdle()) break;
+                        if (g_cfg_changed) { g_cfg_changed = 0U; break; }
                         __WFI();
                     }
                 }

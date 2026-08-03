@@ -248,6 +248,7 @@ static uint32_t _apply_cfg(const ConfigBlob_t *b)
     if (b->sched_months != g_active_months_mask)  { g_active_months_mask  = b->sched_months; n++; }
     if (b->uptime_save_min != g_uptime_save_min)  { g_uptime_save_min     = b->uptime_save_min; n++; }
 
+    if (n > 0U) g_cfg_changed = 1U; /* signal UartCmd_Wait/WFI to abort current pause */
     return n;
 }
 

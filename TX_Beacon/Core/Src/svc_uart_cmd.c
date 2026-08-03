@@ -31,6 +31,7 @@ static const RF_Power_t   s_powers[]    = { RF_PWR1, RF_PWR2, RF_PWR3, RF_PWR4 }
 uint8_t          g_tx_paused            = 0U;
 uint8_t          g_rtc_live             = 0U;
 volatile uint8_t g_config_save_pending  = 0U;
+volatile uint8_t g_cfg_changed          = 0U;
 volatile uint8_t g_log_cfg_save_pending = 0U;
 volatile uint8_t g_hwdesc_save_pending  = 0U;
 volatile uint8_t g_reboot_after_save    = 0U;
@@ -1154,6 +1155,7 @@ void UartCmd_Wait(uint32_t ms)
         BLE_ProcessEvents();    /* service BLE stack — critical for NUS responsiveness */
         UART_CheckIdle();       /* detect physical disconnect mid-wait */
         if (!UART_IsActive() && BLE_IsIdle()) return;
+        if (g_cfg_changed) { g_cfg_changed = 0U; return; } /* new period takes effect now */
         HAL_Delay(5);
     }
 }

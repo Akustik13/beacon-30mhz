@@ -24,6 +24,10 @@ extern uint8_t  g_rtc_live;
 /* Set to 1 by any parameter-changing command; main loop calls FlashConfig_Save() */
 extern volatile uint8_t g_config_save_pending;
 
+/* Set to 1 by _apply_cfg(); UartCmd_Wait/WFI loops break early so new period takes
+ * effect immediately instead of after the current wait cycle completes. */
+extern volatile uint8_t g_cfg_changed;
+
 /* Deferred flash writes — set when BLE is connected; main loop executes after disconnect */
 extern volatile uint8_t g_log_cfg_save_pending;   /* FlashLog_CommitConfig() deferred  */
 extern volatile uint8_t g_hwdesc_save_pending;    /* HwDesc_Save() deferred            */
