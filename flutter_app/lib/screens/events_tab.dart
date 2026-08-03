@@ -248,20 +248,12 @@ class _EventEditorPageState extends State<_EventEditorPage> {
             // ── Condition ─────────────────────────────────────────────────
             _SectionLabel('Condition'),
             const SizedBox(height: 8),
-            DropdownButtonFormField<int>(
+            _popupDropdown<int>(
+              labelText: 'Trigger',
               value: _ev.condType,
-              isExpanded: true,
-              decoration: const InputDecoration(
-                  labelText: 'Trigger', border: OutlineInputBorder()),
-              items: condLabel.entries
-                  .map((e) => DropdownMenuItem(
-                        value: e.key,
-                        child: Text(e.value,
-                            overflow: TextOverflow.ellipsis),
-                      ))
-                  .toList(),
+              options: condLabel,
               onChanged: (v) => setState(() {
-                _ev.condType = v!;
+                _ev.condType = v;
                 if (condNoValue.contains(v)) {
                   _condValCtrl.text = '0';
                   _ev.condVal = 0;
@@ -297,19 +289,11 @@ class _EventEditorPageState extends State<_EventEditorPage> {
             // ── Action ────────────────────────────────────────────────────
             _SectionLabel('Action'),
             const SizedBox(height: 8),
-            DropdownButtonFormField<int>(
+            _popupDropdown<int>(
+              labelText: 'Do',
               value: _ev.actType,
-              isExpanded: true,
-              decoration: const InputDecoration(
-                  labelText: 'Do', border: OutlineInputBorder()),
-              items: actLabel.entries
-                  .map((e) => DropdownMenuItem(
-                        value: e.key,
-                        child: Text(e.value,
-                            overflow: TextOverflow.ellipsis),
-                      ))
-                  .toList(),
-              onChanged: (v) => setState(() => _ev.actType = v!),
+              options: actLabel,
+              onChanged: (v) => setState(() => _ev.actType = v),
             ),
             const SizedBox(height: 12),
             _buildActionParams(),
@@ -371,19 +355,25 @@ class _EventEditorPageState extends State<_EventEditorPage> {
   Widget _buildActionParams() {
     switch (_ev.actType) {
       case actSetPower:
-        return _dropdownField(
-          label: 'Power level',
-          ctrl: _p1Ctrl,
+        return _popupDropdown<int>(
+          labelText: 'Power level',
+          value: _ev.actParam1,
           options: const {0: 'Low (0)', 1: 'Mid (1)', 2: 'High (2)'},
-          onSel: (v) => setState(() => _ev.actParam1 = v),
+          onChanged: (v) {
+            _p1Ctrl.text = v.toString();
+            setState(() => _ev.actParam1 = v);
+          },
         );
 
       case actSetChannel:
-        return _dropdownField(
-          label: 'Channel',
-          ctrl: _p1Ctrl,
+        return _popupDropdown<int>(
+          labelText: 'Channel',
+          value: _ev.actParam1,
           options: const {1: 'CH1', 2: 'CH2', 3: 'Both'},
-          onSel: (v) => setState(() => _ev.actParam1 = v),
+          onChanged: (v) {
+            _p1Ctrl.text = v.toString();
+            setState(() => _ev.actParam1 = v);
+          },
         );
 
       case actTxPulses:
@@ -421,27 +411,36 @@ class _EventEditorPageState extends State<_EventEditorPage> {
     }
   }
 
-  Widget _dropdownField({
-    required String label,
-    required TextEditingController ctrl,
-    required Map<int, String> options,
-    required void Function(int) onSel,
+  Widget _popupDropdown<T>({
+    required String labelText,
+    required T value,
+    required Map<T, String> options,
+    required void Function(T) onChanged,
   }) {
-    final parsed = int.tryParse(ctrl.text) ?? options.keys.first;
-    final val    = options.containsKey(parsed) ? parsed : options.keys.first;
-    return DropdownButtonFormField<int>(
-      value: val,
-      isExpanded: true,
-      decoration: InputDecoration(
-          labelText: label, border: const OutlineInputBorder()),
-      items: options.entries
-          .map((e) =>
-              DropdownMenuItem(value: e.key, child: Text(e.value)))
+    final safeVal = options.containsKey(value) ? value : options.keys.first;
+    return PopupMenuButton<T>(
+      initialValue: safeVal,
+      onSelected: onChanged,
+      constraints: const BoxConstraints(maxHeight: 280),
+      itemBuilder: (ctx) => options.entries
+          .map((e) => PopupMenuItem<T>(value: e.key, child: Text(e.value)))
           .toList(),
-      onChanged: (v) {
-        ctrl.text = v.toString();
-        onSel(v!);
-      },
+      child: InputDecorator(
+        decoration: InputDecoration(
+          labelText: labelText,
+          border: const OutlineInputBorder(),
+          contentPadding: const EdgeInsets.fromLTRB(12, 16, 8, 16),
+        ),
+        child: Row(children: [
+          Expanded(
+            child: Text(
+              options[safeVal] ?? '',
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const Icon(Icons.arrow_drop_down, size: 24),
+        ]),
+      ),
     );
   }
 

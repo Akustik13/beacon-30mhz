@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../providers/ble_provider.dart';
@@ -285,7 +286,7 @@ class _BeaconTabState extends State<BeaconTab> {
               const DropdownMenuItem(value: 1, child: Text('CH1')),
               const DropdownMenuItem(value: 2, child: Text('CH2')),
               const DropdownMenuItem(value: 3, child: Text('CH3')),
-            ], (v) => setState(() { _rfChannel = v!; _dirty = true; _selectedProfile = null; })),
+            ], (v) { HapticFeedback.lightImpact(); setState(() { _rfChannel = v!; _dirty = true; _selectedProfile = null; }); }),
             _labelDropdown('Power', _rfPower, [
               const DropdownMenuItem(value: 1, child: Text('Low (1)')),
               const DropdownMenuItem(value: 2, child: Text('Mid (2)')),
@@ -294,11 +295,11 @@ class _BeaconTabState extends State<BeaconTab> {
             ], (v) => setState(() { _rfPower = v!; _dirty = true; _selectedProfile = null; })),
             _labelWidget('Pulse', DurationInputMs(
               valueMs: _rfPulseMs, minMs: 1, maxMs: 5000,
-              onChanged: (v) => setState(() { _rfPulseMs = v; _dirty = true; _selectedProfile = null; }),
+              onChanged: (v) { HapticFeedback.lightImpact(); setState(() { _rfPulseMs = v; _dirty = true; _selectedProfile = null; }); },
             )),
             _labelWidget('Period', DurationInput(
               valueSeconds: _rfPeriodMs ~/ 1000, minSeconds: 1, maxSeconds: 600,
-              onChanged: (v) => setState(() { _rfPeriodMs = v * 1000; _dirty = true; _selectedProfile = null; }),
+              onChanged: (v) { HapticFeedback.lightImpact(); setState(() { _rfPeriodMs = v * 1000; _dirty = true; _selectedProfile = null; }); },
             )),
           ]),
           const SizedBox(height: 8),
