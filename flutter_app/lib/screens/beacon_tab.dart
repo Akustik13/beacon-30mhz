@@ -274,9 +274,10 @@ class _BeaconTabState extends State<BeaconTab> {
               const DropdownMenuItem(value: 3, child: Text('Eco')),
             ], (v) => setState(() { _rfMode = v!; _dirty = true; _selectedProfile = null; })),
             _labelDropdown('Channel', _rfChannel, [
-              const DropdownMenuItem(value: 0, child: Text('CH1')),
-              const DropdownMenuItem(value: 1, child: Text('CH2')),
-              const DropdownMenuItem(value: 2, child: Text('Both')),
+              const DropdownMenuItem(value: 0, child: Text('CH0')),
+              const DropdownMenuItem(value: 1, child: Text('CH1')),
+              const DropdownMenuItem(value: 2, child: Text('CH2')),
+              const DropdownMenuItem(value: 3, child: Text('CH3')),
             ], (v) => setState(() { _rfChannel = v!; _dirty = true; _selectedProfile = null; })),
             _labelDropdown('Power', _rfPower, [
               const DropdownMenuItem(value: 1, child: Text('Low (1)')),
