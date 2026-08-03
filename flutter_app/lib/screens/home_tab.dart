@@ -41,9 +41,29 @@ class _HomeTabState extends State<HomeTab> {
     }
     if (!connected) _syncBannerShown = false;
 
+    final app = context.watch<AppProvider>();
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Home'),
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.baseline,
+          textBaseline: TextBaseline.alphabetic,
+          children: [
+            const Text('Home'),
+            if (app.appVersion.isNotEmpty) ...[
+              const SizedBox(width: 8),
+              Text(
+                'v${app.appVersion}',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.normal,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ],
+        ),
         actions: [
           if (connected && beacon.isRefreshing)
             const Padding(padding: EdgeInsets.all(16),

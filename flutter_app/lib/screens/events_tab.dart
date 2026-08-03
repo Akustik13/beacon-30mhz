@@ -148,7 +148,6 @@ class _EventCard extends StatelessWidget {
           tooltip: 'Edit event',
           onPressed: () => _openEditor(context),
         ),
-        onTap: () => _openEditor(context),
       ),
     );
   }
@@ -156,7 +155,7 @@ class _EventCard extends StatelessWidget {
   Future<void> _openEditor(BuildContext context) async {
     final result = await showDialog<_EditorResult>(
       context: context,
-      barrierDismissible: false,
+      barrierDismissible: true,
       builder: (_) => _EventEditorDialog(index: index, initial: event),
     );
     if (result == null || !context.mounted) return;

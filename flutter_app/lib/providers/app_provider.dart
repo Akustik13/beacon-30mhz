@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import '../protocol/selftest.dart';
 
 class AppProvider extends ChangeNotifier {
@@ -13,6 +14,7 @@ class AppProvider extends ChangeNotifier {
   bool      _autoDisconnect    = true;
 
   List<String> selftestFailures = [];
+  String appVersion = '';
 
   int       get tabIndex          => _tabIndex;
   bool      get filterBeaconsOnly => _filterBeaconsOnly;
@@ -28,6 +30,9 @@ class AppProvider extends ChangeNotifier {
     if (selftestFailures.isNotEmpty) {
       assert(false, 'Protocol selftest FAILED:\n${selftestFailures.join('\n')}');
     }
+
+    final info = await PackageInfo.fromPlatform();
+    appVersion = info.version;
 
     final prefs = await SharedPreferences.getInstance();
     _filterBeaconsOnly = prefs.getBool('filter_beacons_only') ?? false;
