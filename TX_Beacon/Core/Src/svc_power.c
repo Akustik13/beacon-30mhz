@@ -167,13 +167,16 @@ static void _enter_stop2_raw(void)
         }
     }
 
-    /* Belt-and-suspenders: force VREFEN+TSEN off right before WFI.
-     * ADC1_COMMON is on APB2 — MspDeInit's CLEAR_BIT can be lost if the CPU
-     * write buffer hasn't flushed before the ADC clock is gated. Re-enable
-     * the ADC clock here, clear the bits with DSB, then disable again.
-     * Cost: ~1 µs. Saves ~11 µA (6 µA VREFEN + 5 µA TSEN) in Stop1. */
+    /* Belt-and-suspenders: force ADC fully off right before WFI.
+     * MspDeInit now handles ADVREGEN+DEEPPWD, but re-apply here as a safety
+     * net in case an ADC read happened without a proper DeInit path, or the
+     * write buffer lost the MspDeInit writes when the APB2 clock was gated. */
     __HAL_RCC_ADC_CLK_ENABLE();
     CLEAR_BIT(ADC1_COMMON->CCR, ADC_CCR_VREFEN | ADC_CCR_TSEN);
+    /* STM32WB1M has no DEEPPWD; clearing ADVREGEN powers down the analog block */
+    if ((ADC1->CR & ADC_CR_ADEN) == 0U) {
+        CLEAR_BIT(ADC1->CR, ADC_CR_ADVREGEN);
+    }
     __DSB();
     __HAL_RCC_ADC_CLK_DISABLE();
 
@@ -330,9 +333,13 @@ void Power_EnterStop1(uint32_t seconds)
     MODIFY_REG(PWR->CR1, PWR_CR1_LPMS, PWR_CR1_LPMS_0);
     SET_BIT(SCB->SCR, SCB_SCR_SLEEPDEEP_Msk);
 
-    /* Belt-and-suspenders: same VREFEN/TSEN guard as _enter_stop2_raw */
+    /* Belt-and-suspenders: same full ADC power-down guard as _enter_stop2_raw */
     __HAL_RCC_ADC_CLK_ENABLE();
     CLEAR_BIT(ADC1_COMMON->CCR, ADC_CCR_VREFEN | ADC_CCR_TSEN);
+    /* STM32WB1M has no DEEPPWD; clearing ADVREGEN powers down the analog block */
+    if ((ADC1->CR & ADC_CR_ADEN) == 0U) {
+        CLEAR_BIT(ADC1->CR, ADC_CR_ADVREGEN);
+    }
     __DSB();
     __HAL_RCC_ADC_CLK_DISABLE();
 
