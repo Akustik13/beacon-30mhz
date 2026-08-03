@@ -5,6 +5,8 @@ import '../providers/ble_provider.dart';
 import '../providers/beacon_provider.dart';
 import '../protocol/event_model.dart';
 
+// ── Events list tab ───────────────────────────────────────────────────────────
+
 class EventsTab extends StatelessWidget {
   const EventsTab({super.key});
 
@@ -33,23 +35,40 @@ class EventsTab extends StatelessWidget {
         ],
       ),
       body: Column(children: [
-        if (!connected) const _OfflineBanner(),
+        if (!connected)
+          Container(
+            width: double.infinity,
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+            child: Row(children: [
+              Icon(Icons.bluetooth_disabled,
+                  size: 16,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant),
+              const SizedBox(width: 8),
+              Text('Not connected — edits saved locally',
+                  style: Theme.of(context).textTheme.bodySmall),
+            ]),
+          ),
         Expanded(
           child: ListView.builder(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             itemCount: maxEvents,
-            itemBuilder: (ctx, i) => _EventCard(
-              key: ValueKey(i),
-              index: i,
-              event: beacon.events[i],
-            ),
+            itemBuilder: (_, i) {
+              final ev = beacon.events[i];
+              return _EventCard(
+                key: ValueKey(i),
+                index: i,
+                event: ev,
+              );
+            },
           ),
         ),
       ]),
     );
   }
 
-  Future<void> _confirmClearAll(BuildContext ctx, BeaconProvider beacon) async {
+  Future<void> _confirmClearAll(
+      BuildContext ctx, BeaconProvider beacon) async {
     final ok = await showDialog<bool>(
       context: ctx,
       builder: (_) => AlertDialog(
@@ -71,28 +90,7 @@ class EventsTab extends StatelessWidget {
   }
 }
 
-// ── Offline banner ─────────────────────────────────────────────────────────────
-
-class _OfflineBanner extends StatelessWidget {
-  const _OfflineBanner();
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      color: Theme.of(context).colorScheme.surfaceContainerHighest,
-      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-      child: Row(children: [
-        Icon(Icons.bluetooth_disabled,
-            size: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
-        const SizedBox(width: 8),
-        Text('Not connected — edits saved locally',
-            style: Theme.of(context).textTheme.bodySmall),
-      ]),
-    );
-  }
-}
-
-// ── Event card ────────────────────────────────────────────────────────────────
+// ── Event list card ───────────────────────────────────────────────────────────
 
 class _EventCard extends StatelessWidget {
   final int         index;
@@ -105,16 +103,20 @@ class _EventCard extends StatelessWidget {
     final isEmpty = ev.condType == condDisabled && ev.actType == actNone;
     final cs      = Theme.of(context).colorScheme;
 
-    final badgeColor = ev.enabled ? cs.primaryContainer : cs.surfaceContainerHighest;
-    final badgeText  = ev.enabled ? cs.onPrimaryContainer : cs.onSurfaceVariant;
+    final badgeColor =
+        ev.enabled ? cs.primaryContainer : cs.surfaceContainerHighest;
+    final badgeText =
+        ev.enabled ? cs.onPrimaryContainer : cs.onSurfaceVariant;
 
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       clipBehavior: Clip.antiAlias,
       child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
         leading: Container(
-          width: 28, height: 28,
+          width: 28,
+          height: 28,
           decoration: BoxDecoration(
             color: badgeColor,
             borderRadius: BorderRadius.circular(6),
@@ -123,11 +125,13 @@ class _EventCard extends StatelessWidget {
           child: Text(
             '${index + 1}',
             style: TextStyle(
-                fontWeight: FontWeight.bold, fontSize: 13, color: badgeText),
+                fontWeight: FontWeight.bold,
+                fontSize: 13,
+                color: badgeText),
           ),
         ),
         title: isEmpty
-            ? Text('Empty slot — tap ✎ to configure',
+            ? Text('Empty — tap ✎ to configure',
                 style: TextStyle(
                     color: cs.onSurfaceVariant,
                     fontStyle: FontStyle.italic,
@@ -135,7 +139,8 @@ class _EventCard extends StatelessWidget {
             : Text('IF ${ev.condSummary}',
                 style: TextStyle(
                     fontSize: 12,
-                    color: ev.enabled ? cs.onSurface : cs.onSurfaceVariant)),
+                    color:
+                        ev.enabled ? cs.onSurface : cs.onSurfaceVariant)),
         subtitle: isEmpty
             ? null
             : Text('→ ${ev.actSummary}',
@@ -143,22 +148,19 @@ class _EventCard extends StatelessWidget {
                     fontSize: 13,
                     fontWeight: FontWeight.w600,
                     color: ev.enabled ? cs.primary : cs.onSurfaceVariant)),
-        trailing: IconButton(
-          icon: const Icon(Icons.edit_outlined),
-          tooltip: 'Edit event',
-          onPressed: () => _openEditor(context),
-        ),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () => _openEditor(context),
       ),
     );
   }
 
   Future<void> _openEditor(BuildContext context) async {
-    final result = await showModalBottomSheet<_EditorResult>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _EventEditorSheet(index: index, initial: event),
+    // Full-page navigation — avoids any overlay/modal freeze issues
+    final result = await Navigator.of(context).push<_EditorResult>(
+      MaterialPageRoute(
+        builder: (_) =>
+            _EventEditorPage(index: index, initial: event),
+      ),
     );
     if (result == null || !context.mounted) return;
     final beacon = context.read<BeaconProvider>();
@@ -178,23 +180,23 @@ class _EditorResult {
   const _EditorResult({this.clear = false, required this.event});
 }
 
-// ── Event editor bottom sheet ──────────────────────────────────────────────────
+// ── Full-page event editor ────────────────────────────────────────────────────
 
-class _EventEditorSheet extends StatefulWidget {
+class _EventEditorPage extends StatefulWidget {
   final int         index;
   final BeaconEvent initial;
-  const _EventEditorSheet({required this.index, required this.initial});
+  const _EventEditorPage({required this.index, required this.initial});
 
   @override
-  State<_EventEditorSheet> createState() => _EventEditorSheetState();
+  State<_EventEditorPage> createState() => _EventEditorPageState();
 }
 
-class _EventEditorSheetState extends State<_EventEditorSheet> {
-  late BeaconEvent _ev;
-  late TextEditingController _condValCtrl;
-  late TextEditingController _p1Ctrl;
-  late TextEditingController _p2Ctrl;
-  late TextEditingController _coolCtrl;
+class _EventEditorPageState extends State<_EventEditorPage> {
+  late BeaconEvent              _ev;
+  late TextEditingController    _condValCtrl;
+  late TextEditingController    _p1Ctrl;
+  late TextEditingController    _p2Ctrl;
+  late TextEditingController    _coolCtrl;
 
   @override
   void initState() {
@@ -215,56 +217,54 @@ class _EventEditorSheetState extends State<_EventEditorSheet> {
     super.dispose();
   }
 
+  void _save() {
+    _ev.condVal   = int.tryParse(_condValCtrl.text) ?? _ev.condVal;
+    _ev.actParam1 = int.tryParse(_p1Ctrl.text)      ?? _ev.actParam1;
+    _ev.actParam2 = int.tryParse(_p2Ctrl.text)      ?? _ev.actParam2;
+    _ev.cooldown  = int.tryParse(_coolCtrl.text)    ?? _ev.cooldown;
+    Navigator.pop(context, _EditorResult(event: _ev));
+  }
+
+  void _clear() {
+    Navigator.pop(context, _EditorResult(clear: true, event: _ev));
+  }
+
   @override
   Widget build(BuildContext context) {
-    final cs     = Theme.of(context).colorScheme;
-    final bottom = MediaQuery.of(context).viewInsets.bottom;
-
-    return Container(
-      decoration: BoxDecoration(
-        color: cs.surface,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Event ${widget.index + 1}'),
+        actions: [
+          TextButton(
+            onPressed: _clear,
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Clear'),
+          ),
+          FilledButton(
+            onPressed: _save,
+            child: const Text('Save'),
+          ),
+          const SizedBox(width: 8),
+        ],
       ),
-      padding: EdgeInsets.fromLTRB(16, 0, 16, bottom + 16),
-      child: SingleChildScrollView(
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
         child: Column(
-          mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // drag handle
-            Center(
-              child: Container(
-                margin: const EdgeInsets.symmetric(vertical: 10),
-                width: 40, height: 4,
-                decoration: BoxDecoration(
-                  color: cs.onSurfaceVariant.withValues(alpha: 0.4),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
-            // title
-            Padding(
-              padding: const EdgeInsets.only(bottom: 16),
-              child: Text(
-                'Event ${widget.index + 1}',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-            ),
-
             // ── Condition ─────────────────────────────────────────────────
             _SectionLabel('Condition'),
-            const SizedBox(height: 6),
+            const SizedBox(height: 8),
             DropdownButtonFormField<int>(
               value: _ev.condType,
               isExpanded: true,
               decoration: const InputDecoration(
-                  labelText: 'Trigger',
-                  isDense: true,
-                  border: OutlineInputBorder()),
+                  labelText: 'Trigger', border: OutlineInputBorder()),
               items: condLabel.entries
                   .map((e) => DropdownMenuItem(
                         value: e.key,
-                        child: Text(e.value, overflow: TextOverflow.ellipsis),
+                        child: Text(e.value,
+                            overflow: TextOverflow.ellipsis),
                       ))
                   .toList(),
               onChanged: (v) => setState(() {
@@ -276,12 +276,11 @@ class _EventEditorSheetState extends State<_EventEditorSheet> {
               }),
             ),
             if (!condNoValue.contains(_ev.condType)) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: 12),
               TextField(
                 controller: _condValCtrl,
                 decoration: InputDecoration(
                   labelText: _condValueLabel(_ev.condType),
-                  isDense: true,
                   border: const OutlineInputBorder(),
                 ),
                 keyboardType:
@@ -292,106 +291,66 @@ class _EventEditorSheetState extends State<_EventEditorSheet> {
                 onChanged: (s) => _ev.condVal = int.tryParse(s) ?? 0,
               ),
             ],
-            const SizedBox(height: 4),
             CheckboxListTile(
-              dense: true,
               contentPadding: EdgeInsets.zero,
               controlAffinity: ListTileControlAffinity.leading,
               value: _ev.invertCond,
               onChanged: (v) => setState(() => _ev.invertCond = v!),
-              title: const Text('Invert condition (NOT)',
-                  style: TextStyle(fontSize: 13)),
+              title: const Text('Invert condition (NOT)'),
             ),
 
-            const SizedBox(height: 12),
+            const SizedBox(height: 16),
 
             // ── Action ────────────────────────────────────────────────────
             _SectionLabel('Action'),
-            const SizedBox(height: 6),
+            const SizedBox(height: 8),
             DropdownButtonFormField<int>(
               value: _ev.actType,
               isExpanded: true,
               decoration: const InputDecoration(
-                  labelText: 'Do',
-                  isDense: true,
-                  border: OutlineInputBorder()),
+                  labelText: 'Do', border: OutlineInputBorder()),
               items: actLabel.entries
                   .map((e) => DropdownMenuItem(
                         value: e.key,
-                        child: Text(e.value, overflow: TextOverflow.ellipsis),
+                        child: Text(e.value,
+                            overflow: TextOverflow.ellipsis),
                       ))
                   .toList(),
               onChanged: (v) => setState(() => _ev.actType = v!),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
             _buildActionParams(),
 
-            const SizedBox(height: 12),
+            const SizedBox(height: 16),
 
             // ── Options ───────────────────────────────────────────────────
             _SectionLabel('Options'),
-            const SizedBox(height: 6),
+            const SizedBox(height: 8),
             TextField(
               controller: _coolCtrl,
               decoration: const InputDecoration(
                 labelText: 'Cooldown (TX cycles)',
                 hintText: '0 = always trigger',
-                isDense: true,
                 border: OutlineInputBorder(),
               ),
               keyboardType: TextInputType.number,
               inputFormatters: [FilteringTextInputFormatter.digitsOnly],
               onChanged: (s) => _ev.cooldown = int.tryParse(s) ?? 0,
             ),
-            const SizedBox(height: 4),
-            Row(children: [
-              Expanded(
-                child: CheckboxListTile(
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  controlAffinity: ListTileControlAffinity.leading,
-                  value: _ev.enabled,
-                  onChanged: (v) => setState(() => _ev.enabled = v!),
-                  title: const Text('Enabled',
-                      style: TextStyle(fontSize: 13)),
-                ),
-              ),
-              Expanded(
-                child: CheckboxListTile(
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  controlAffinity: ListTileControlAffinity.leading,
-                  value: _ev.oneShot,
-                  onChanged: (v) => setState(() => _ev.oneShot = v!),
-                  title: const Text('One-shot',
-                      style: TextStyle(fontSize: 13)),
-                ),
-              ),
-            ]),
-
-            const SizedBox(height: 16),
-
-            // ── Buttons ───────────────────────────────────────────────────
-            Row(children: [
-              OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
-                onPressed: () => Navigator.pop(
-                    context, _EditorResult(clear: true, event: _ev)),
-                icon: const Icon(Icons.delete_outline, size: 18),
-                label: const Text('Clear'),
-              ),
-              const Spacer(),
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Cancel'),
-              ),
-              const SizedBox(width: 8),
-              FilledButton.icon(
-                onPressed: _submit,
-                icon: const Icon(Icons.check, size: 18),
-                label: const Text('Save'),
-              ),
-            ]),
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              controlAffinity: ListTileControlAffinity.leading,
+              value: _ev.enabled,
+              onChanged: (v) => setState(() => _ev.enabled = v!),
+              title: const Text('Enabled'),
+            ),
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              controlAffinity: ListTileControlAffinity.leading,
+              value: _ev.oneShot,
+              onChanged: (v) => setState(() => _ev.oneShot = v!),
+              title: const Text('One-shot (fire once, then disable)'),
+            ),
           ],
         ),
       ),
@@ -401,7 +360,7 @@ class _EventEditorSheetState extends State<_EventEditorSheet> {
   Widget _buildActionParams() {
     switch (_ev.actType) {
       case actSetPower:
-        return _inlineDropdown(
+        return _dropdownField(
           label: 'Power level',
           ctrl: _p1Ctrl,
           options: const {0: 'Low (0)', 1: 'Mid (1)', 2: 'High (2)'},
@@ -409,7 +368,7 @@ class _EventEditorSheetState extends State<_EventEditorSheet> {
         );
 
       case actSetChannel:
-        return _inlineDropdown(
+        return _dropdownField(
           label: 'Channel',
           ctrl: _p1Ctrl,
           options: const {1: 'CH1', 2: 'CH2', 3: 'Both'},
@@ -421,7 +380,7 @@ class _EventEditorSheetState extends State<_EventEditorSheet> {
           Expanded(
               child: _numField(_p1Ctrl, 'Count', '1',
                   (v) => _ev.actParam1 = v)),
-          const SizedBox(width: 8),
+          const SizedBox(width: 12),
           Expanded(
               child: _numField(_p2Ctrl, 'Gap (ms)', '200',
                   (v) => _ev.actParam2 = v)),
@@ -432,7 +391,7 @@ class _EventEditorSheetState extends State<_EventEditorSheet> {
           Expanded(
               child: _numField(_p1Ctrl, 'ON (ms)', '100',
                   (v) => _ev.actParam1 = v)),
-          const SizedBox(width: 8),
+          const SizedBox(width: 12),
           Expanded(
               child: _numField(_p2Ctrl, 'OFF (ms)', '900',
                   (v) => _ev.actParam2 = v)),
@@ -451,7 +410,7 @@ class _EventEditorSheetState extends State<_EventEditorSheet> {
     }
   }
 
-  Widget _inlineDropdown({
+  Widget _dropdownField({
     required String label,
     required TextEditingController ctrl,
     required Map<int, String> options,
@@ -459,16 +418,14 @@ class _EventEditorSheetState extends State<_EventEditorSheet> {
   }) {
     final parsed = int.tryParse(ctrl.text) ?? options.keys.first;
     final val    = options.containsKey(parsed) ? parsed : options.keys.first;
-
     return DropdownButtonFormField<int>(
       value: val,
       isExpanded: true,
       decoration: InputDecoration(
-          labelText: label,
-          isDense: true,
-          border: const OutlineInputBorder()),
+          labelText: label, border: const OutlineInputBorder()),
       items: options.entries
-          .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value)))
+          .map((e) =>
+              DropdownMenuItem(value: e.key, child: Text(e.value)))
           .toList(),
       onChanged: (v) {
         ctrl.text = v.toString();
@@ -484,20 +441,11 @@ class _EventEditorSheetState extends State<_EventEditorSheet> {
       decoration: InputDecoration(
           labelText: label,
           hintText: hint,
-          isDense: true,
           border: const OutlineInputBorder()),
       keyboardType: TextInputType.number,
       inputFormatters: [FilteringTextInputFormatter.digitsOnly],
       onChanged: (s) => onVal(int.tryParse(s) ?? 0),
     );
-  }
-
-  void _submit() {
-    _ev.condVal   = int.tryParse(_condValCtrl.text) ?? _ev.condVal;
-    _ev.actParam1 = int.tryParse(_p1Ctrl.text)      ?? _ev.actParam1;
-    _ev.actParam2 = int.tryParse(_p2Ctrl.text)      ?? _ev.actParam2;
-    _ev.cooldown  = int.tryParse(_coolCtrl.text)    ?? _ev.cooldown;
-    Navigator.pop(context, _EditorResult(event: _ev));
   }
 
   static String _condValueLabel(int cond) {
