@@ -280,7 +280,7 @@ class _BeaconTabState extends State<BeaconTab> {
               const DropdownMenuItem(value: 1, child: Text('Pulse')),
               const DropdownMenuItem(value: 2, child: Text('Continuous')),
               const DropdownMenuItem(value: 3, child: Text('Eco')),
-            ], (v) => setState(() { _rfMode = v!; _dirty = true; _selectedProfile = null; })),
+            ], (v) { HapticFeedback.lightImpact(); setState(() { _rfMode = v!; _dirty = true; _selectedProfile = null; }); }),
             _labelDropdown('Channel', _rfChannel, [
               const DropdownMenuItem(value: 0, child: Text('CH0')),
               const DropdownMenuItem(value: 1, child: Text('CH1')),
@@ -292,7 +292,7 @@ class _BeaconTabState extends State<BeaconTab> {
               const DropdownMenuItem(value: 2, child: Text('Mid (2)')),
               const DropdownMenuItem(value: 3, child: Text('High (3)')),
               const DropdownMenuItem(value: 4, child: Text('Max (4)')),
-            ], (v) => setState(() { _rfPower = v!; _dirty = true; _selectedProfile = null; })),
+            ], (v) { HapticFeedback.lightImpact(); setState(() { _rfPower = v!; _dirty = true; _selectedProfile = null; }); }),
             _labelWidget('Pulse', DurationInputMs(
               valueMs: _rfPulseMs, minMs: 1, maxMs: 5000,
               onChanged: (v) { HapticFeedback.lightImpact(); setState(() { _rfPulseMs = v; _dirty = true; _selectedProfile = null; }); },
@@ -309,7 +309,7 @@ class _BeaconTabState extends State<BeaconTab> {
             SwitchListTile(
               title: const Text('Enable Schedule'),
               value: _schedEn != 0,
-              onChanged: (v) => setState(() { _schedEn = v ? 1 : 0; _dirty = true; _selectedProfile = null; }),
+              onChanged: (v) { HapticFeedback.lightImpact(); setState(() { _schedEn = v ? 1 : 0; _dirty = true; _selectedProfile = null; }); },
               contentPadding: EdgeInsets.zero,
             ),
             if (_schedEn != 0) ...[

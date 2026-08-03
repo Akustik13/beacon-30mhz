@@ -149,7 +149,7 @@ class _EventCard extends StatelessWidget {
                     fontWeight: FontWeight.w600,
                     color: ev.enabled ? cs.primary : cs.onSurfaceVariant)),
         trailing: const Icon(Icons.chevron_right),
-        onTap: () => _openEditor(context),
+        onTap: () { HapticFeedback.lightImpact(); _openEditor(context); },
       ),
     );
   }
@@ -240,8 +240,27 @@ class _EventEditorPageState extends State<_EventEditorPage> {
         ),
         title: Text('Event ${widget.index + 1}'),
       ),
+      bottomNavigationBar: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+          child: Row(children: [
+            OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
+              onPressed: () { HapticFeedback.lightImpact(); _clear(); },
+              icon: const Icon(Icons.delete_outline, size: 18),
+              label: const Text('Clear slot'),
+            ),
+            const Spacer(),
+            FilledButton.icon(
+              onPressed: () { HapticFeedback.lightImpact(); _save(); },
+              icon: const Icon(Icons.check, size: 18),
+              label: const Text('Save'),
+            ),
+          ]),
+        ),
+      ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -280,7 +299,7 @@ class _EventEditorPageState extends State<_EventEditorPage> {
               contentPadding: EdgeInsets.zero,
               controlAffinity: ListTileControlAffinity.leading,
               value: _ev.invertCond,
-              onChanged: (v) => setState(() => _ev.invertCond = v!),
+              onChanged: (v) { HapticFeedback.lightImpact(); setState(() => _ev.invertCond = v!); },
               title: const Text('Invert condition (NOT)'),
             ),
 
@@ -318,34 +337,17 @@ class _EventEditorPageState extends State<_EventEditorPage> {
               contentPadding: EdgeInsets.zero,
               controlAffinity: ListTileControlAffinity.leading,
               value: _ev.enabled,
-              onChanged: (v) => setState(() => _ev.enabled = v!),
+              onChanged: (v) { HapticFeedback.lightImpact(); setState(() => _ev.enabled = v!); },
               title: const Text('Enabled'),
             ),
             CheckboxListTile(
               contentPadding: EdgeInsets.zero,
               controlAffinity: ListTileControlAffinity.leading,
               value: _ev.oneShot,
-              onChanged: (v) => setState(() => _ev.oneShot = v!),
+              onChanged: (v) { HapticFeedback.lightImpact(); setState(() => _ev.oneShot = v!); },
               title: const Text('One-shot (fire once, then disable)'),
             ),
 
-            const SizedBox(height: 24),
-
-            // ── Buttons ───────────────────────────────────────────────────
-            Row(children: [
-              OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
-                onPressed: _clear,
-                icon: const Icon(Icons.delete_outline, size: 18),
-                label: const Text('Clear slot'),
-              ),
-              const Spacer(),
-              FilledButton.icon(
-                onPressed: _save,
-                icon: const Icon(Icons.check, size: 18),
-                label: const Text('Save'),
-              ),
-            ]),
           ],
         ),
       ),
@@ -420,7 +422,7 @@ class _EventEditorPageState extends State<_EventEditorPage> {
     final safeVal = options.containsKey(value) ? value : options.keys.first;
     return PopupMenuButton<T>(
       initialValue: safeVal,
-      onSelected: onChanged,
+      onSelected: (v) { HapticFeedback.lightImpact(); onChanged(v); },
       constraints: const BoxConstraints(maxHeight: 280),
       itemBuilder: (ctx) => options.entries
           .map((e) => PopupMenuItem<T>(value: e.key, child: Text(e.value)))

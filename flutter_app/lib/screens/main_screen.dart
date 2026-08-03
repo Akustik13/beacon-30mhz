@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
 import '../providers/ble_provider.dart';
@@ -159,7 +160,7 @@ class _MainScreenState extends State<MainScreen> {
         ),
         bottomNavigationBar: NavigationBar(
           selectedIndex: app.tabIndex.clamp(0, 6),
-          onDestinationSelected: app.setTabIndex,
+          onDestinationSelected: (i) { HapticFeedback.lightImpact(); app.setTabIndex(i); },
           labelBehavior: NavigationDestinationLabelBehavior.onlyShowSelected,
           destinations: const [
             NavigationDestination(
