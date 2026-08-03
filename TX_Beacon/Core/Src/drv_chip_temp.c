@@ -49,10 +49,13 @@ void HAL_ADC_MspInit(ADC_HandleTypeDef *hadc)
 void HAL_ADC_MspDeInit(ADC_HandleTypeDef *hadc)
 {
     if (hadc->Instance == ADC1) {
-        /* VREFEN and TSEN in ADC_CCR are NOT cleared by HAL_ADC_DeInit().
-         * If left set they draw ~6 µA (VREFINT) + ~5 µA (TEMPSENSOR) in Stop1.
-         * Clear them here so every HAL_ADC_DeInit() call fully powers down ADC. */
+        /* Clear VREFEN and TSEN before disabling the ADC clock.
+         * ADC1_COMMON is on APB2 — without __DSB() the write can sit in the
+         * Cortex-M4 write buffer while RCC_CLK_DISABLE has already gated the
+         * APB2 clock, causing the write to be lost and VREFEN/TSEN to remain
+         * set (~11 µA extra in Stop1). __DSB() drains the buffer first. */
         CLEAR_BIT(ADC1_COMMON->CCR, ADC_CCR_VREFEN | ADC_CCR_TSEN);
+        __DSB();
         __HAL_RCC_ADC_CLK_DISABLE();
     }
 }

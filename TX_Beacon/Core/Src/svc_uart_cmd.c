@@ -623,11 +623,11 @@ static void _exec(char *line)
             char *a2 = strtok(NULL, " \r\n");
             if (a2) {
                 int v = atoi(a2);
-                if (v >= 1 && v <= 255) {
-                    g_batt_period_s = (uint8_t)v;
+                if (v >= 1 && v <= 3600) {
+                    g_batt_period_s = (uint16_t)v;
                     g_config_save_pending = 1U;
                     UART_Printf("[BATT] period=%us\r\n", (unsigned)g_batt_period_s);
-                } else UART_Print("range: 1-255 s\r\n");
+                } else UART_Print("range: 1-3600 s\r\n");
             }
         } else if (!strcmp(arg, "scale")) {
             /* parse e.g. "2.0" or "1.5" → ×10 stored as uint8 */

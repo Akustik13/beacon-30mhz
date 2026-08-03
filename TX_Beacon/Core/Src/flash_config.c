@@ -452,7 +452,9 @@ uint8_t FlashConfig_Load(void)
         g_temp_offset_x10 = p->temp_offset_x10;
         g_rtc_live        = p->rtc_live ? 1U : 0U;
         g_batt_mode       = (p->batt_mode <= 1U)      ? p->batt_mode      : 0U;
-        g_batt_period_s   = (p->batt_period_s >= 1U)  ? p->batt_period_s  : 5U;
+        g_batt_period_s   = (p->batt_period_s_ext >= 1U) ? p->batt_period_s_ext
+                          : (p->batt_period_s >= 1U)     ? (uint16_t)p->batt_period_s
+                          : 5U;
         g_batt_scale_x10  = (p->batt_scale_x10 >= 1U) ? p->batt_scale_x10 : 20U;
         g_light_mode      = (p->light_mode <= 1U)      ? p->light_mode     : 0U;
         g_light_period_s  = (p->light_period_s >= 1U)  ? p->light_period_s : 5U;
@@ -504,7 +506,7 @@ uint8_t FlashConfig_Load(void)
         g_ble_adv_interval_ms = p->ble_adv_interval_ms ? p->ble_adv_interval_ms : 1000U;
         g_ble_name_mode       = (p->ble_name_mode <= 1U) ? p->ble_name_mode : 0U;
         memcpy(g_ble_name, p->ble_name, sizeof(g_ble_name));
-        g_ble_led_mode        = (p->ble_led_mode <= 1U) ? p->ble_led_mode : 0U;
+        g_ble_led_mode        = (p->ble_led_mode <= 2U) ? p->ble_led_mode : 0U;
         g_ble_name[sizeof(g_ble_name) - 1U] = '\0';
 
         UART_Printf("[CFG] v2 loaded: mode=%u ch=%u pwr=%u dur=%lu per=%lu led=%u\r\n",
@@ -535,7 +537,7 @@ uint8_t FlashConfig_Load(void)
         g_temp_offset_x10 = p->temp_offset_x10;
         g_rtc_live        = p->rtc_live ? 1U : 0U;
         g_batt_mode       = (p->batt_mode <= 1U)      ? p->batt_mode      : 0U;
-        g_batt_period_s   = (p->batt_period_s >= 1U)  ? p->batt_period_s  : 5U;
+        g_batt_period_s   = (p->batt_period_s >= 1U)  ? (uint16_t)p->batt_period_s : 5U;
         g_batt_scale_x10  = (p->batt_scale_x10 >= 1U) ? p->batt_scale_x10 : 20U;
         g_light_mode      = (p->light_mode <= 1U)      ? p->light_mode     : 0U;
         g_light_period_s  = (p->light_period_s >= 1U)  ? p->light_period_s : 5U;
@@ -571,8 +573,9 @@ static void _build_v2(TxConfigV2_t *cfg)
     cfg->temp_period_s   = (g_temp_period_s >= 1U)  ? g_temp_period_s  : 1U;
     cfg->temp_offset_x10 = g_temp_offset_x10;
     cfg->rtc_live        = g_rtc_live;
-    cfg->batt_mode       = g_batt_mode;
-    cfg->batt_period_s   = (g_batt_period_s >= 1U)  ? g_batt_period_s  : 5U;
+    cfg->batt_mode           = g_batt_mode;
+    cfg->batt_period_s       = (g_batt_period_s <= 255U) ? (uint8_t)g_batt_period_s : 255U;
+    cfg->batt_period_s_ext   = g_batt_period_s;
     cfg->batt_scale_x10  = (g_batt_scale_x10 >= 1U) ? g_batt_scale_x10 : 20U;
     cfg->light_mode      = g_light_mode;
     cfg->light_period_s  = (g_light_period_s >= 1U)  ? g_light_period_s : 5U;

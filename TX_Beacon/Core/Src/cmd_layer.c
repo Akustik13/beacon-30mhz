@@ -237,8 +237,8 @@ static uint8_t _op_config_reset(const uint8_t *in, uint8_t in_len,
     g_temp_mode      = TEMP_MODE_OFF;
     g_temp_period_s  = 60U;
     g_temp_offset_x10 = 0;
-    g_batt_mode      = BATT_MODE_OFF;
-    g_batt_period_s  = 60U;
+    g_batt_mode      = BATT_MODE_PERIODIC;
+    g_batt_period_s  = 3600U;
     g_batt_scale_x10 = 20U;
     g_light_mode     = LIGHT_MODE_OFF;
     g_light_period_s = 60U;
@@ -435,7 +435,7 @@ static uint8_t _op_sensor_interval(const uint8_t *in, uint8_t in_len,
         g_config_save_pending = 1U;
         break;
     case SENSOR_ID_BATT:
-        g_batt_period_s = (iv > 255U) ? 255U : (uint8_t)iv;
+        g_batt_period_s = (iv > 3600U) ? 3600U : (uint16_t)iv;
         lc.battery_interval_s = (uint16_t)iv;
         FlashLog_SetConfig(&lc);
         g_config_save_pending = 1U;
@@ -851,7 +851,7 @@ static uint8_t _op_ble_set(const uint8_t *in, uint8_t in_len, uint8_t *out_len)
     g_ble_name_mode       = nm;
     (void)memcpy(g_ble_name, &in[9], 12U);
     g_ble_name[11]        = '\0';
-    g_ble_led_mode        = (in_len >= 22U && in[21] <= 1U) ? in[21] : 0U;
+    g_ble_led_mode        = (in_len >= 22U && in[21] <= 2U) ? in[21] : 0U;
     /* Defer save to main loop (Flash_CPU2IsIdle guard). Immediate FlashConfig_Save()
      * here stalls CPU2 during flash erase → BLE supervision timeout → disconnect. */
     g_config_save_pending = 1U;

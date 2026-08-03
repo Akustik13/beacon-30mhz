@@ -141,8 +141,10 @@ typedef struct __attribute__((packed)) {
     char     ble_name[12];          /* manual device name (null-terminated)      */
     /* [96] BLE LED indicator mode */
     uint8_t  ble_led_mode;          /* BLE_LED_NORMAL=0, BLE_LED_OFF=1           */
-    /* [97..251] reserved headroom (155 bytes) */
-    uint8_t  _headroom[155];        /* always written 0, never loaded            */
+    /* [97..98] extended battery period in seconds (uint16; 0 = use legacy batt_period_s) */
+    uint16_t batt_period_s_ext;
+    /* [99..251] reserved headroom (153 bytes) */
+    uint8_t  _headroom[153];        /* always written 0, never loaded            */
     /* [252..255] integrity */
     uint32_t crc32;                 /* CRC32 over bytes [0..251]               */
 } TxConfigV2_t;

@@ -251,6 +251,7 @@ class _LineChartCard extends StatelessWidget {
   final List<ChartPoint> points;
   final Color lineColor;
   final String Function(double) formatY;
+  final bool fullscreen;
 
   const _LineChartCard({
     required this.title,
@@ -258,6 +259,7 @@ class _LineChartCard extends StatelessWidget {
     required this.points,
     required this.lineColor,
     required this.formatY,
+    this.fullscreen = false,
   });
 
   @override
@@ -324,7 +326,7 @@ class _LineChartCard extends StatelessWidget {
     return Column(children: [
       // ── header: title + unit + stats ────────────────────────────────
       Padding(
-        padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
+        padding: const EdgeInsets.fromLTRB(12, 6, 4, 6),
         child: Row(children: [
           Text(title,
               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
@@ -336,6 +338,19 @@ class _LineChartCard extends StatelessWidget {
           _StatBadge('AVG', formatY(rawAvg), Colors.orange),
           const SizedBox(width: 6),
           _StatBadge('MAX', formatY(rawMax), lineColor),
+          if (!fullscreen)
+            Builder(builder: (ctx) => IconButton(
+              icon: const Icon(Icons.fullscreen, size: 20),
+              tooltip: 'Fullscreen',
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              constraints: const BoxConstraints(),
+              onPressed: () => Navigator.push(ctx, MaterialPageRoute(
+                builder: (_) => _FullscreenChartScreen(
+                  title: title, unit: unit, points: points,
+                  lineColor: lineColor, formatY: formatY,
+                ),
+              )),
+            )),
         ]),
       ),
       const Divider(height: 1),
@@ -634,4 +649,48 @@ class _Legend extends StatelessWidget {
     const SizedBox(width: 4),
     Text(label, style: TextStyle(fontSize: 11, color: color)),
   ]);
+}
+
+// ── Fullscreen chart screen ────────────────────────────────────────────────
+
+class _FullscreenChartScreen extends StatelessWidget {
+  final String title;
+  final String unit;
+  final List<ChartPoint> points;
+  final Color lineColor;
+  final String Function(double) formatY;
+
+  const _FullscreenChartScreen({
+    required this.title,
+    required this.unit,
+    required this.points,
+    required this.lineColor,
+    required this.formatY,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(title),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.fullscreen_exit),
+            tooltip: 'Exit fullscreen',
+            onPressed: () => Navigator.pop(context),
+          ),
+        ],
+      ),
+      body: SafeArea(
+        child: _LineChartCard(
+          title: title,
+          unit: unit,
+          points: points,
+          lineColor: lineColor,
+          formatY: formatY,
+          fullscreen: true,
+        ),
+      ),
+    );
+  }
 }

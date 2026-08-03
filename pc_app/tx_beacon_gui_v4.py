@@ -5675,9 +5675,19 @@ class BleTab(QWidget):
         ll = QVBoxLayout(led_card)
         ll.setContentsMargins(16, 12, 16, 12)
         ll.setSpacing(6)
-        self._chk_led_off = QCheckBox(
-            'Disable BLE LED indication  (LED follows main settings during BLE)')
-        ll.addWidget(self._chk_led_off)
+        led_row = QHBoxLayout()
+        led_row.setContentsMargins(0, 0, 0, 0)
+        led_row.setSpacing(10)
+        led_row.addWidget(QLabel('BLE LED mode:'))
+        self._cmb_ble_led = QComboBox()
+        self._cmb_ble_led.addItems([
+            'Normal  (blink each adv interval)',
+            'Off  (follow main LED setting)',
+            'Triple blink  (3× at start, CPU1 sleeps)',
+        ])
+        led_row.addWidget(self._cmb_ble_led)
+        led_row.addStretch()
+        ll.addLayout(led_row)
         outer.addWidget(led_card)
 
         # ── Auto-scan ─────────────────────────────────────────────────────────
@@ -5851,7 +5861,7 @@ class BleTab(QWidget):
             adv_interval_ms = self._spin_adv.value(),
             name_mode       = nm,
             name            = self._edit_name.text() if nm else '',
-            led_mode        = 1 if self._chk_led_off.isChecked() else 0,
+            led_mode        = self._cmb_ble_led.currentIndex(),
         )
 
     # ── Public API ────────────────────────────────────────────────────────────
@@ -5911,7 +5921,7 @@ class BleTab(QWidget):
         else:
             self._rb_name_auto.setChecked(True)
             self._edit_name.clear()
-        self._chk_led_off.setChecked(bool(s.led_mode))
+        self._cmb_ble_led.setCurrentIndex(min(max(s.led_mode, 0), 2))
         self._update_timing_state()
 
     def set_status(self, text: str, ok: bool = True):

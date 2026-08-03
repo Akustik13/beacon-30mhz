@@ -212,7 +212,7 @@ static uint32_t _apply_cfg(const ConfigBlob_t *b)
     uint8_t new_batt_mode = (b->bat_iv_s > 0U) ? BATT_MODE_PERIODIC : BATT_MODE_OFF;
     if (new_batt_mode != g_batt_mode) { g_batt_mode = new_batt_mode; n++; }
     if (b->bat_iv_s > 0U) {
-        uint8_t ps = (b->bat_iv_s > 255U) ? 255U : (uint8_t)b->bat_iv_s;
+        uint16_t ps = b->bat_iv_s;
         if (ps != g_batt_period_s) { g_batt_period_s = ps; n++; }
     }
 

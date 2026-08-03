@@ -231,10 +231,30 @@ int main(void)
     do { \
         if (GEKON_IsPending() && !GEKON_IsPressed()) GEKON_ClearPending(); \
         if (!GEKON_IsPending()) { \
-            if (UART_IsActive() || !BLE_IsIdle() || s_gcnt > 0U) { \
+            if (s_gcnt > 0U) { \
                 uint32_t _sw = (ms); \
-                if (s_gcnt > 0U && _sw > GEKON_BLE_WIN_MAX_MS) _sw = GEKON_BLE_WIN_MAX_MS; \
+                if (_sw > GEKON_BLE_WIN_MAX_MS) _sw = GEKON_BLE_WIN_MAX_MS; \
                 UartCmd_Wait(_sw); \
+            } else if (UART_IsActive()) { \
+                UartCmd_Wait(ms); \
+            } else if (!BLE_IsIdle()) { \
+                if (g_ble_led_mode == BLE_LED_NORMAL) { \
+                    UartCmd_Wait(ms); \
+                } else { \
+                    /* OFF/TRIPLE: WFI sleep while BLE active. \
+                     * Stop1 overcounts uwTick on early IPCC wakeup (adds full ms \
+                     * even when woken at 50ms) → session timeout fires 20× too fast. \
+                     * WFI keeps SysTick running: HAL_GetTick() stays accurate, \
+                     * IPCC wakes CPU1 within 1 IRQ latency to service events. */ \
+                    uint32_t _ble_t0 = HAL_GetTick(); \
+                    uint32_t _ble_ms = (ms) < 1000U ? (ms) : 1000U; \
+                    while ((HAL_GetTick() - _ble_t0) < _ble_ms) { \
+                        BLE_ProcessEvents(); \
+                        LED_Update(); \
+                        if (BLE_IsIdle()) break; \
+                        __WFI(); \
+                    } \
+                } \
             } else { \
                 Power_EnterStop2_ms(ms); \
             } \
@@ -702,10 +722,25 @@ int main(void)
             if (RF_IsEnabled()) RF_Stop();
             UART_CheckIdle();
             LED_Update();
-            if (UART_IsActive() || !BLE_IsIdle() || s_gcnt > 0U) {
+            if (s_gcnt > 0U) {
                 uint32_t _w = g_tx_period_ms;
-                if (s_gcnt > 0U && _w > GEKON_BLE_WIN_MAX_MS) _w = GEKON_BLE_WIN_MAX_MS;
+                if (_w > GEKON_BLE_WIN_MAX_MS) _w = GEKON_BLE_WIN_MAX_MS;
                 UartCmd_Wait(_w);
+            } else if (UART_IsActive()) {
+                UartCmd_Wait(g_tx_period_ms);
+            } else if (!BLE_IsIdle()) {
+                if (g_ble_led_mode == BLE_LED_NORMAL) {
+                    UartCmd_Wait(g_tx_period_ms);
+                } else {
+                    uint32_t _ble_t0 = HAL_GetTick();
+                    uint32_t _ble_ms = g_tx_period_ms < 1000U ? g_tx_period_ms : 1000U;
+                    while ((HAL_GetTick() - _ble_t0) < _ble_ms) {
+                        BLE_ProcessEvents();
+                        LED_Update();
+                        if (BLE_IsIdle()) break;
+                        __WFI();
+                    }
+                }
             } else {
                 uint32_t sleep_s = _off_sleep_secs();
                 if ((g_ble_op_mode & BLE_OP_SCHEDULE) && g_ble_interval_s > 0U &&

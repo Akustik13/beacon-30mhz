@@ -158,6 +158,13 @@ class _BeaconTabState extends State<BeaconTab> {
 
   Future<void> _apply() async {
     final beacon = context.read<BeaconProvider>();
+    if (beacon.config == null) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Config not loaded yet — pull to refresh'),
+        backgroundColor: Colors.orange,
+      ));
+      return;
+    }
     final ok = await beacon.writeConfig(_buildConfig());
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(

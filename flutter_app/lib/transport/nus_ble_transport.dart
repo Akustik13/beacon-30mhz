@@ -285,11 +285,15 @@ class NusTransport {
   /// BleProvider wires this to its inactivity-timer reset.
   void Function()? onActivity;
 
+  /// When true, successful commands do NOT call onActivity.
+  /// Used for background status polls so they don't prevent auto-disconnect.
+  bool suppressActivity = false;
+
   // Use _sendCmdParsed as the canonical sendCmd
   Future<CmdResult> cmd(int opcode,
       {Uint8List? payload, Duration? timeout}) async {
     final r = await _sendCmdParsed(opcode, payload: payload, timeout: timeout);
-    if (r.rc != 0xFF) onActivity?.call();
+    if (!suppressActivity && r.rc != 0xFF) onActivity?.call();
     return r;
   }
 

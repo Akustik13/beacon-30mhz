@@ -18,8 +18,8 @@
 #define BATT_MODE_OFF       0U
 #define BATT_MODE_PERIODIC  1U
 
-extern uint8_t g_batt_mode;
-extern uint8_t g_batt_period_s;
+extern uint8_t  g_batt_mode;
+extern uint16_t g_batt_period_s;
 extern uint8_t g_batt_scale_x10;    /* divider multiplier ×10 (20 = 2.0×) */
 
 extern uint32_t g_last_batt_mV;

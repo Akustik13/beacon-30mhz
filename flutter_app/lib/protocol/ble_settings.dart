@@ -12,7 +12,7 @@ class BleSettings {
   int    advIntervalMs; // advertising interval ms
   int    nameMode;      // 0=auto "BCN_XXXX", 1=manual
   String name;          // custom name, max 11 chars
-  int    ledMode;       // 0=normal, 1=off
+  int    ledMode;       // 0=normal, 1=off, 2=triple blink
 
   BleSettings({
     this.opMode        = bleOpContinuous,

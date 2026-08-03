@@ -26,8 +26,9 @@ class BeaconProvider extends ChangeNotifier {
   Map<String, dynamic>? wakeCfg;
   List<Map<String, dynamic>> sensors = [];
 
-  bool    isBusy      = false;
-  bool    isRefreshing = false;
+  bool    isBusy            = false;
+  bool    isRefreshing       = false;
+  bool    _statusRefreshing  = false; // guards against race with writeConfig
   String? lastError;
   String? fwVersion;
 
@@ -132,9 +133,14 @@ class BeaconProvider extends ChangeNotifier {
   }
 
   Future<void> refreshStatus() async {
-    if (_t == null || isBusy) return;
-    await _readStatus();
-    notifyListeners();
+    if (_t == null || isBusy || _statusRefreshing) return;
+    _statusRefreshing = true;
+    try {
+      await _readStatus();
+      notifyListeners();
+    } finally {
+      _statusRefreshing = false;
+    }
   }
 
   Future<void> _readConfig() async {
@@ -144,14 +150,20 @@ class BeaconProvider extends ChangeNotifier {
 
   Future<void> _readStatus() async {
     try {
+      // Suppress inactivity reset so background polls don't block auto-disconnect
+      _t!.suppressActivity = true;
       status = await _t!.readStatus();
+      _t!.suppressActivity = false;
       if (status != null) {
         final now = DateTime.now();
         _addLiveTempFiltered(now, status!.tempC);
         _addLivePoint(liveBatHistory,   now, status!.batMv.toDouble());
         _addLivePoint(liveLightHistory, now, status!.lightRaw.toDouble());
       }
-    } catch (e) { lastError = e.toString(); }
+    } catch (e) {
+      _t?.suppressActivity = false;
+      lastError = e.toString();
+    }
   }
 
   Future<void> _readInfo() async {
@@ -231,6 +243,12 @@ class BeaconProvider extends ChangeNotifier {
 
   Future<bool> writeConfig(ConfigBlob cfg) async {
     if (_t == null) return false;
+    // Wait for any in-progress background status read to avoid BLE command collision
+    int waited = 0;
+    while (_statusRefreshing && waited < 500) {
+      await Future.delayed(const Duration(milliseconds: 20));
+      waited += 20;
+    }
     isBusy = true; notifyListeners();
     final ok = await _t!.writeConfig(cfg);
     if (ok) config = cfg;

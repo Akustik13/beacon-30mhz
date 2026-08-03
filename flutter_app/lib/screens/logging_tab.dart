@@ -83,6 +83,20 @@ class _LoggingTabState extends State<LoggingTab> {
     });
   }
 
+  static String _fmtDepth(double s) {
+    if (s.isInfinite) return '∞';
+    final sec = s.round();
+    if (sec < 60)  return '$sec сек.';
+    final m = sec ~/ 60;
+    if (m < 60)    return '$m хв.';
+    final h = m ~/ 60;
+    final rm = m % 60;
+    if (h < 24)    return rm > 0 ? '$h год. $rm хв.' : '$h год.';
+    final d = h ~/ 24;
+    final rh = h % 24;
+    return rh > 0 ? '$d дн. $rh год.' : '$d дн.';
+  }
+
   double _memoryDepthS(BeaconProvider beacon) {
     double writesPerS = 0;
     for (final id in _intervals.keys) {
@@ -142,11 +156,8 @@ class _LoggingTabState extends State<LoggingTab> {
     final ble    = context.watch<BleProvider>();
     final beacon = context.watch<BeaconProvider>();
 
-    final depthS = _memoryDepthS(beacon);
-    final depthStr = depthS.isInfinite ? '∞'
-        : depthS < 3600 ? '${depthS.round()}s'
-        : depthS < 86400 ? '${(depthS / 3600).toStringAsFixed(1)}h'
-        : '${(depthS / 86400).toStringAsFixed(1)}d';
+    final depthS   = _memoryDepthS(beacon);
+    final depthStr = _fmtDepth(depthS);
     final circular  = _logOverflow == 1;
     final total     = beacon.logTotal > 0 ? beacon.logTotal : logEntriesMax;
     final usedDisp  = beacon.logUsed.clamp(0, total);
@@ -227,6 +238,19 @@ class _LoggingTabState extends State<LoggingTab> {
           ),
           const SizedBox(height: 8),
 
+          // Per-sensor settings
+          ..._intervals.keys.map((id) => _SensorCard(
+            id:       id,
+            name:     _sensorNames[id]!,
+            icon:     _sensorIcons[id]!,
+            enabled:  _enabled[id]!,
+            interval: _intervals[id]!,
+            onEnabledChanged: (v) => setState(() { _enabled[id] = v; _localDirty = true; }),
+            onIntervalChanged: (v) => setState(() { _intervals[id] = v; _localDirty = true; }),
+          )),
+
+          const SizedBox(height: 8),
+
           // Write strategy card
           Card(
             child: Padding(
@@ -252,8 +276,8 @@ class _LoggingTabState extends State<LoggingTab> {
                       label: Text(e[1] as String),
                       selected: _logMode == e[0] as int,
                       onSelected: (_) => setState(() {
-                        _logMode     = e[0] as int;
-                        _localDirty  = true;
+                        _logMode       = e[0] as int;
+                        _localDirty    = true;
                         _strategyDirty = true;
                       }),
                     ),
@@ -313,18 +337,6 @@ class _LoggingTabState extends State<LoggingTab> {
               ]),
             ),
           ),
-          const SizedBox(height: 8),
-
-          // Per-sensor settings
-          ..._intervals.keys.map((id) => _SensorCard(
-            id:       id,
-            name:     _sensorNames[id]!,
-            icon:     _sensorIcons[id]!,
-            enabled:  _enabled[id]!,
-            interval: _intervals[id]!,
-            onEnabledChanged: (v) => setState(() { _enabled[id] = v; _localDirty = true; }),
-            onIntervalChanged: (v) => setState(() { _intervals[id] = v; _localDirty = true; }),
-          )),
 
           const SizedBox(height: 12),
           FilledButton.icon(

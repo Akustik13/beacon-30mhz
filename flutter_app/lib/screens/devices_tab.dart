@@ -166,6 +166,7 @@ class _DevicesTabState extends State<DevicesTab>
                     items: const [
                       DropdownMenuItem(value: 0, child: Text('Normal')),
                       DropdownMenuItem(value: 1, child: Text('Off')),
+                      DropdownMenuItem(value: 2, child: Text('Triple blink')),
                     ],
                   ),
                 ]),

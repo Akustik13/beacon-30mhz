@@ -11,8 +11,8 @@
 
 #define BATT_SAMPLES    4U
 
-uint8_t  g_batt_mode       = BATT_MODE_OFF;
-uint8_t  g_batt_period_s   = 5U;
+uint8_t  g_batt_mode       = BATT_MODE_PERIODIC;
+uint16_t g_batt_period_s   = 3600U;
 uint8_t  g_batt_scale_x10  = 20U;   /* default 2.0× */
 uint32_t g_last_batt_mV     = 0U;
 int8_t   g_last_batt_pct    = -1;

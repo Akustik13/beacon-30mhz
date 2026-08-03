@@ -368,6 +368,10 @@ void BLE_StartSession(uint32_t timeout_ms)
         LED_WriteGpio(0U);
         s_adv_blink_tick  = HAL_GetTick();
         s_adv_blink_phase = 0U;
+    } else if (g_ble_led_mode == BLE_LED_TRIPLE) {
+        /* 3 quick blinks at session start — CPU1 can sleep after that */
+        LED_Blink(3U, 80U, 80U);
+        /* No LED override: main driver continues; CPU1 free to Stop2 */
     }
     /* BLE_LED_OFF: override stays off — main LED driver runs normally throughout */
 }
@@ -728,7 +732,9 @@ static void _BleGetBdAddress(uint8_t *pbd_addr)
 /* ── BLE LED non-blocking state machine ──────────────────────────────────── */
 void BLE_LED_Update(void)
 {
-    if (g_ble_led_mode != BLE_LED_NORMAL) return;  /* BLE_LED_OFF: main driver runs */
+    /* TRIPLE: only 3 blinks at session start (handled in BLE_StartSession).
+     * OFF/TRIPLE: no periodic blink — main driver runs; CPU1 may sleep. */
+    if (g_ble_led_mode != BLE_LED_NORMAL) return;
     if (s_ble_state != BLE_ST_ADV) return;          /* only during advertising */
 
     uint32_t now    = HAL_GetTick();

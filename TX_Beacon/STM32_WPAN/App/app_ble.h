@@ -19,6 +19,7 @@ extern "C" {
 /* ── BLE LED indicator mode ──────────────────────────────────────────────── */
 #define BLE_LED_NORMAL  0U  /* adv: 1 short blink/period; connect: 3 blinks then off */
 #define BLE_LED_OFF     1U  /* no BLE LED indication; main LED mode always active */
+#define BLE_LED_TRIPLE  2U  /* 3 quick blinks at adv start, then CPU1 can sleep */
 
 /* ── Runtime BLE settings (Task 5) — loaded from flash, saved via FlashConfig_Save() */
 extern uint8_t  g_ble_op_mode;          /* BleOpMode_t value                 */
@@ -28,7 +29,7 @@ extern uint16_t g_ble_duration_sec;     /* SCHEDULE/GEKON: window duration   */
 extern uint16_t g_ble_adv_interval_ms;  /* advertising interval in ms        */
 extern uint8_t  g_ble_name_mode;        /* 0=auto "BCN_XXXX", 1=manual       */
 extern char     g_ble_name[12];         /* manual device name (null-term)    */
-extern uint8_t  g_ble_led_mode;         /* BLE_LED_NORMAL or BLE_LED_OFF     */
+extern uint8_t  g_ble_led_mode;         /* BLE_LED_NORMAL, BLE_LED_OFF, BLE_LED_TRIPLE */
 
 /* ── Initialization ──────────────────────────────────────────────────────── */
 
@@ -75,8 +76,9 @@ void BLE_ProcessEvents(void);
 void BLE_NusMarkActivity(void);
 
 /* Non-blocking BLE LED state machine — call from main loop every iteration.
- * In BLE_LED_NORMAL mode: blinks LED once per adv period; suppresses main LED driver.
- * In BLE_LED_OFF mode: no-op (main LED driver runs normally). */
+ * NORMAL: blinks LED once per adv period; suppresses main LED driver.
+ * TRIPLE: no-op (blinks already done at session start in BLE_StartSession).
+ * OFF:    no-op (main LED driver runs normally; CPU1 may sleep). */
 void BLE_LED_Update(void);
 
 #ifdef __cplusplus
