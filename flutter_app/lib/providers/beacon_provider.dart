@@ -8,6 +8,7 @@ import '../protocol/info_blob.dart';
 import '../protocol/ble_settings.dart';
 import '../protocol/log_record.dart';
 import '../protocol/opcodes.dart';
+import '../protocol/event_model.dart';
 
 class ChartPoint {
   final DateTime ts;
@@ -25,6 +26,7 @@ class BeaconProvider extends ChangeNotifier {
   BleSettings? bleSettings;
   Map<String, dynamic>? wakeCfg;
   List<Map<String, dynamic>> sensors = [];
+  List<BeaconEvent> events = List.generate(maxEvents, (_) => BeaconEvent());
 
   bool    isBusy            = false;
   bool    isRefreshing       = false;
@@ -76,6 +78,7 @@ class BeaconProvider extends ChangeNotifier {
     bleSettings = null;
     wakeCfg     = null;
     sensors     = [];
+    events      = List.generate(maxEvents, (_) => BeaconEvent());
     logEntries  = [];
     logUsed     = 0;
     logTotal    = 0;
@@ -104,6 +107,7 @@ class BeaconProvider extends ChangeNotifier {
     status  = null;
     info    = null;
     bleSettings = null;
+    events      = List.generate(maxEvents, (_) => BeaconEvent());
     logEntries  = [];
     notifyListeners();
   }
@@ -127,6 +131,7 @@ class BeaconProvider extends ChangeNotifier {
       _readSensors(),
       _readLogInfo(),
       _readBeaconTime(),
+      loadEvents(),
     ]);
     isRefreshing = false;
     notifyListeners();
@@ -450,6 +455,48 @@ class BeaconProvider extends ChangeNotifier {
     }
     isBusy = false; notifyListeners();
     return ok;
+  }
+
+  // ── Events ───────────────────────────────────────────────────────────────
+
+  Future<void> loadEvents() async {
+    if (_t == null) return;
+    try {
+      final res = await _t!.cmd(opEventGet);
+      if (res.rc == cmdOk && res.data.length >= eventBlobSize) {
+        events = eventsFromBlob(res.data);
+        notifyListeners();
+      }
+    } catch (_) { /* firmware may not support yet — keep local defaults */ }
+  }
+
+  Future<bool> saveEvent(int index, BeaconEvent ev) async {
+    if (index < 0 || index >= maxEvents) return false;
+    events[index] = ev;
+    notifyListeners();
+    if (_t == null) return true; // offline edit — will sync on next connect
+    try {
+      final payload = Uint8List(1 + eventSize);
+      payload[0] = index & 0xFF;
+      payload.setRange(1, 1 + eventSize, ev.toBytes());
+      final res = await _t!.cmd(opEventSet, payload: payload);
+      return res.rc == cmdOk;
+    } catch (_) { return false; }
+  }
+
+  Future<bool> clearEvent(int index) async {
+    return saveEvent(index, BeaconEvent());
+  }
+
+  Future<bool> clearAllEvents() async {
+    events = List.generate(maxEvents, (_) => BeaconEvent());
+    notifyListeners();
+    if (_t == null) return true;
+    try {
+      final res = await _t!.cmd(opEventClear,
+          payload: Uint8List.fromList([0xFF]));
+      return res.rc == cmdOk;
+    } catch (_) { return false; }
   }
 
   // ── Helpers ──────────────────────────────────────────────────────────────

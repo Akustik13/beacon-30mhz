@@ -12,6 +12,7 @@ import 'data_tab.dart';
 import 'devices_tab.dart';
 import 'settings_screen.dart';
 import 'fleet_home_tab.dart';
+import 'events_tab.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -150,14 +151,14 @@ class _MainScreenState extends State<MainScreen> {
       return Scaffold(
         extendBody: true,
         body: IndexedStack(
-          index: app.tabIndex.clamp(0, 5),
+          index: app.tabIndex.clamp(0, 6),
           children: const [
             FleetHomeTab(), BeaconTab(), LoggingTab(), DataTab(),
-            DevicesTab(), SettingsScreen(),
+            EventsTab(), DevicesTab(), SettingsScreen(),
           ],
         ),
         bottomNavigationBar: NavigationBar(
-          selectedIndex: app.tabIndex.clamp(0, 5),
+          selectedIndex: app.tabIndex.clamp(0, 6),
           onDestinationSelected: app.setTabIndex,
           labelBehavior: NavigationDestinationLabelBehavior.onlyShowSelected,
           destinations: const [
@@ -174,6 +175,9 @@ class _MainScreenState extends State<MainScreen> {
               icon: Icon(Icons.show_chart_outlined),
               selectedIcon: Icon(Icons.show_chart), label: 'Data'),
             NavigationDestination(
+              icon: Icon(Icons.bolt_outlined),
+              selectedIcon: Icon(Icons.bolt), label: 'Events'),
+            NavigationDestination(
               icon: Icon(Icons.bluetooth_outlined),
               selectedIcon: Icon(Icons.bluetooth_connected), label: 'Devices'),
             NavigationDestination(
@@ -187,14 +191,14 @@ class _MainScreenState extends State<MainScreen> {
     // Focused mode (default)
     const bodies = [
       HomeTab(), BeaconTab(), LoggingTab(), DataTab(),
-      DevicesTab(), SettingsScreen(),
+      EventsTab(), DevicesTab(), SettingsScreen(),
     ];
 
     return Scaffold(
       extendBody: true,
-      body: IndexedStack(index: app.tabIndex.clamp(0, 5), children: bodies),
+      body: IndexedStack(index: app.tabIndex.clamp(0, 6), children: bodies),
       bottomNavigationBar: NavigationBar(
-        selectedIndex: app.tabIndex.clamp(0, 5),
+        selectedIndex: app.tabIndex.clamp(0, 6),
         onDestinationSelected: app.setTabIndex,
         labelBehavior: NavigationDestinationLabelBehavior.onlyShowSelected,
         destinations: const [
@@ -210,6 +214,9 @@ class _MainScreenState extends State<MainScreen> {
           NavigationDestination(
             icon: Icon(Icons.show_chart_outlined),
             selectedIcon: Icon(Icons.show_chart), label: 'Data'),
+          NavigationDestination(
+            icon: Icon(Icons.bolt_outlined),
+            selectedIcon: Icon(Icons.bolt), label: 'Events'),
           NavigationDestination(
             icon: Icon(Icons.bluetooth_outlined),
             selectedIcon: Icon(Icons.bluetooth_connected), label: 'Devices'),
