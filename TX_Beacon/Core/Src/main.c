@@ -223,15 +223,21 @@ int main(void)
      * When deployed without UART/BLE: Stop1 sleep to save power.
      * Validate GEKON before skipping sleep: RF coupling at max power can cause
      * spurious falling edges on PA0, setting s_flag without a real press.
-     * If flag is set but PA0 is HIGH (glitch), clear it and sleep normally. */
+     * If flag is set but PA0 is HIGH (glitch), clear it and sleep normally.
+     * When collecting gekon double-press (s_gcnt>0): cap wait to the BLE window
+     * so the timeout check at the top of the loop fires within 1.5 s, not
+     * after the full g_tx_period_ms which can be much longer. */
 #define SLEEP_OR_WAIT_MS(ms) \
     do { \
         if (GEKON_IsPending() && !GEKON_IsPressed()) GEKON_ClearPending(); \
         if (!GEKON_IsPending()) { \
-            /* While waiting for 2nd gekon press, busy-wait so uwTick advances  \
-             * in real time (Power_EnterStop2 would advance it by the full ms). */ \
-            if (UART_IsActive() || !BLE_IsIdle() || s_gcnt > 0U) UartCmd_Wait(ms); \
-            else Power_EnterStop2_ms(ms); \
+            if (UART_IsActive() || !BLE_IsIdle() || s_gcnt > 0U) { \
+                uint32_t _sw = (ms); \
+                if (s_gcnt > 0U && _sw > GEKON_BLE_WIN_MAX_MS) _sw = GEKON_BLE_WIN_MAX_MS; \
+                UartCmd_Wait(_sw); \
+            } else { \
+                Power_EnterStop2_ms(ms); \
+            } \
         } \
     } while (0)
 
@@ -696,8 +702,11 @@ int main(void)
             if (RF_IsEnabled()) RF_Stop();
             UART_CheckIdle();
             LED_Update();
-            if (UART_IsActive() || !BLE_IsIdle() || s_gcnt > 0U) UartCmd_Wait(g_tx_period_ms);
-            else {
+            if (UART_IsActive() || !BLE_IsIdle() || s_gcnt > 0U) {
+                uint32_t _w = g_tx_period_ms;
+                if (s_gcnt > 0U && _w > GEKON_BLE_WIN_MAX_MS) _w = GEKON_BLE_WIN_MAX_MS;
+                UartCmd_Wait(_w);
+            } else {
                 uint32_t sleep_s = _off_sleep_secs();
                 if ((g_ble_op_mode & BLE_OP_SCHEDULE) && g_ble_interval_s > 0U &&
                     (uint32_t)g_ble_interval_s < sleep_s) {

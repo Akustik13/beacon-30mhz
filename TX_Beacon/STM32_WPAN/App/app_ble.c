@@ -68,11 +68,11 @@ static volatile uint32_t s_nus_last_rx_tick = 0U;
 void BLE_NusMarkActivity(void) { s_nus_last_rx_tick = HAL_GetTick(); }
 
 /* ── BLE runtime settings (Task 5) — loaded from flash via flash_config.c ── */
-uint8_t  g_ble_op_mode          = BLE_OP_CONTINUOUS;
+uint8_t  g_ble_op_mode          = BLE_OP_GEKON;
 uint8_t  g_ble_tx_power         = CFG_TX_POWER;
 uint16_t g_ble_interval_s       = 1800U; /* schedule mode: seconds between windows */
-uint16_t g_ble_duration_sec     = 60U;   /* session window (s) for schedule/gekon  */
-uint16_t g_ble_adv_interval_ms  = 1000U; /* advertising interval (ms)              */
+uint16_t g_ble_duration_sec     = 10U;   /* session window (s) for schedule/gekon  */
+uint16_t g_ble_adv_interval_ms  = 100U;  /* advertising interval (ms)              */
 uint8_t  g_ble_name_mode        = 0U;    /* 0=auto "BCN_XXXX", 1=manual g_ble_name */
 char     g_ble_name[12]         = {0};   /* manual device name (null-terminated)   */
 uint8_t  g_ble_led_mode         = BLE_LED_NORMAL;
@@ -104,28 +104,31 @@ static void _StopSession_internal(void);
 
 uint8_t  BLE_IsIdle(void)        { return (s_ble_state == BLE_ST_IDLE) ? 1U : 0U; }
 uint8_t  BLE_IsConnected(void)   { return (s_ble_state == BLE_ST_CONN) ? 1U : 0U; }
+uint8_t  BLE_CPU2Initialized(void) { return s_cpu2_initialized; }
 uint8_t  BLE_IsAdvertising(void) { return (s_ble_state == BLE_ST_ADV)  ? 1U : 0U; }
 uint16_t BLE_GetConnHandle(void) { return s_conn_handle; }
 
 void BLE_ProcessEvents(void)
 {
-    /* Normally the IPCC IRQ dispatches this. Polling the unmasked RX flags as
-     * a fallback also makes event handling robust across Stop-mode wake-up. */
-    uint32_t rx_pending = IPCC->C2TOC1SR & ~IPCC->C1MR & 0x3FU;
-    if (rx_pending != 0U) {
-        HW_IPCC_Rx_Handler();
-    }
+    /* Only drain IPCC when CPU2's BLE stack is running.
+     * Clearing C2→C1 flags while CPU2 is in Shutdown sends it a "TX free"
+     * interrupt via the IPCC peripheral, waking CPU2 from Shutdown into Stop1
+     * (~12 µA extra). Guard with s_cpu2_initialized to prevent this. */
+    if (s_cpu2_initialized) {
+        uint32_t rx_pending = IPCC->C2TOC1SR & ~IPCC->C1MR & 0x3FU;
+        if (rx_pending != 0U) {
+            HW_IPCC_Rx_Handler();
+        }
 
-    /* Process transport queues directly — avoids UTIL_SEQ blocking issue that
-     * prevented HCI events from being dispatched in this standalone integration. */
-    while (s_shci_evt_pending != 0U) {
-        s_shci_evt_pending = 0U;
-        shci_user_evt_proc();
-    }
-    while (s_hci_evt_pending != 0U) {
-        s_hci_evt_pending = 0U;
-        s_hci_process_count++;
-        hci_user_evt_proc();
+        while (s_shci_evt_pending != 0U) {
+            s_shci_evt_pending = 0U;
+            shci_user_evt_proc();
+        }
+        while (s_hci_evt_pending != 0U) {
+            s_hci_evt_pending = 0U;
+            s_hci_process_count++;
+            hci_user_evt_proc();
+        }
     }
 
     /* Session timeout: stop advertising if window expired (schedule/gekon modes) */
@@ -213,7 +216,6 @@ void BLE_AppInit(void)
     TL_MM_Init(&mm_cfg);
 
     /* ── Enable TL (boots CPU2) ───────────────────────────────────────────── */
-    LL_C2_PWR_SetPowerMode(LL_PWR_MODE_SHUTDOWN);
     s_cpu2_ready = 0U;
     s_waiting_cpu2_ready = 1U;
     UART_Print("[BLE] TL_Enable (booting CPU2)...\r\n");
@@ -422,21 +424,19 @@ void BLE_ForceShutdown(void)
 
 static void _StopSession_internal(void)
 {
-    /* Set Stop1 BEFORE stopping advertising so the mode register is already
-     * set when CPU2 processes the stop command. This way any BLE LL timer
-     * that fires after advertising stops (~64 ms "next slot" timer) still
-     * uses Stop1 for WFI — CPU2 wakes briefly, processes the empty event,
-     * then re-enters Stop1 automatically instead of staying in Run (440 µA).
-     * Stop1 (not Shutdown) is intentional: CPU2 SRAM is retained and the
-     * BLE stack resumes cleanly for the next session without TL_Enable(). */
+    /* Set Stop1 so CPU2 enters low-power after the last BLE LL timer.
+     * We cannot use Shutdown here: C2BOOT can only be set once per hardware
+     * reset — software cannot clear it (RM0471 / hw_ipcc.c:~210).  If Shutdown
+     * were used, TL_Enable() on the next BLE_StartSession() would be a 1→1
+     * no-op and CPU2 would never receive SHCI_READY.
+     * svc_power.c guards the C2CR1=Shutdown write with !BLE_CPU2Initialized(),
+     * so this Stop1 request is preserved across CPU1 sleep cycles. */
     LL_C2_PWR_SetPowerMode(LL_PWR_MODE_STOP1);
 
     if (s_ble_state != BLE_ST_IDLE) {
         aci_gap_set_non_discoverable();
-        /* Drain IPCC for up to 200 ms. After advertising stops, the BLE LL
-         * sends a cleanup event ~64 ms later via IPCC. If CPU1 sleeps before
-         * processing it, CPU2 waits on the occupied IPCC channel and stays in
-         * Run (440 µA). Polling here lets CPU2 finish and enter Stop1. */
+        /* Drain IPCC for up to 200 ms so CPU2 can process the advertising-stop
+         * cleanup event and transition to Shutdown before CPU1 sleeps. */
         uint32_t _t0 = HAL_GetTick();
         while ((HAL_GetTick() - _t0) < 200U) {
             uint32_t _rx = IPCC->C2TOC1SR & ~IPCC->C1MR & 0x3FU;
@@ -452,12 +452,14 @@ static void _StopSession_internal(void)
     s_hci_evt_pending  = 0U;
     s_session_active   = 0U;
     s_session_is_timed = 0U;
-    /* s_cpu2_ready and s_cpu2_initialized stay 1 — stack remains ready */
+    /* s_cpu2_initialized stays 1: BLE stack SRAM preserved in Stop1.
+     * Next BLE_StartSession() takes the fast _StartAdvertising() path. */
+    s_cpu2_ready       = 0U;
 
     LED_SetBleOverride(0U);
     BLE_Beacon_OnDisconnect();
     NUS_OnDisconnect();
-    UART_Print("[BLE] Session ended (CPU2 stays ready).\r\n");
+    UART_Print("[BLE] Session ended (CPU2 → Stop1, fast restart on next session).\r\n");
 }
 
 /* ── GAP / GATT init sequence ─────────────────────────────────────────────── */

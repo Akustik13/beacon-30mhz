@@ -60,10 +60,11 @@ void BLE_StopSession(void);
 void BLE_ForceShutdown(void);
 
 /* ── State queries ───────────────────────────────────────────────────────── */
-uint8_t  BLE_IsIdle(void);        /* 1 when not advertising and not connected  */
-uint8_t  BLE_IsConnected(void);   /* 1 when a client is connected              */
-uint8_t  BLE_IsAdvertising(void); /* 1 when advertising (not connected)        */
-uint16_t BLE_GetConnHandle(void); /* current connection handle, 0xFFFF if not connected */
+uint8_t  BLE_IsIdle(void);          /* 1 when not advertising and not connected  */
+uint8_t  BLE_IsConnected(void);     /* 1 when a client is connected              */
+uint8_t  BLE_IsAdvertising(void);   /* 1 when advertising (not connected)        */
+uint8_t  BLE_CPU2Initialized(void); /* 1 when BLE stack is up (CPU2 in Stop1)    */
+uint16_t BLE_GetConnHandle(void);   /* current connection handle, 0xFFFF if not connected */
 
 /* Run pending BLE events — call every main loop iteration.
  * Also checks session timeout and NUS inactivity timeout. */

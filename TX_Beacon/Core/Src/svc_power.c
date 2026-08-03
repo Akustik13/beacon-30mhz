@@ -132,9 +132,12 @@ static void _enter_stop2_raw(void)
     /* NOTE: PWR_CR1_FPDS on WB15 = "Flash PD during LPsleep", NOT Stop modes.
      * In Stop1, Flash is powered down automatically — no FPDS write needed. */
 
-    /* CPU2 Shutdown (0b111) — only when BLE is not advertising/connected.
-     * While BLE is active, CPU2 must stay awake to run the radio. */
-    if (BLE_IsIdle()) {
+    /* CPU2 Shutdown (0b111) — only when BLE stack is truly down.
+     * Skip when BLE_CPU2Initialized(): CPU2 is in Stop1 between BLE sessions
+     * (SRAM preserved so fast restart works).  Writing Shutdown here would cause
+     * CPU2 to enter Shutdown on its next WFI, destroying the BLE SRAM state and
+     * preventing the fast _StartAdvertising() path on the next gekon press. */
+    if (BLE_IsIdle() && !BLE_CPU2Initialized()) {
         MODIFY_REG(PWR->C2CR1, PWR_C2CR1_LPMS,
                    PWR_C2CR1_LPMS_2 | PWR_C2CR1_LPMS_1 | PWR_C2CR1_LPMS_0);
     }
@@ -163,6 +166,16 @@ static void _enter_stop2_raw(void)
             UART_Print("[PRE-WFI] WB1M=WB15xx: Stop2 not supported, using Stop1 ~2uA\r\n");
         }
     }
+
+    /* Belt-and-suspenders: force VREFEN+TSEN off right before WFI.
+     * ADC1_COMMON is on APB2 — MspDeInit's CLEAR_BIT can be lost if the CPU
+     * write buffer hasn't flushed before the ADC clock is gated. Re-enable
+     * the ADC clock here, clear the bits with DSB, then disable again.
+     * Cost: ~1 µs. Saves ~11 µA (6 µA VREFEN + 5 µA TSEN) in Stop1. */
+    __HAL_RCC_ADC_CLK_ENABLE();
+    CLEAR_BIT(ADC1_COMMON->CCR, ADC_CCR_VREFEN | ADC_CCR_TSEN);
+    __DSB();
+    __HAL_RCC_ADC_CLK_DISABLE();
 
     __DSB();
     __ISB();
@@ -307,8 +320,8 @@ void Power_EnterStop1(uint32_t seconds)
     HAL_RTCEx_SetWakeUpTimer_IT(&hrtc, seconds - 1U,
                                 RTC_WAKEUPCLOCK_CK_SPRE_16BITS);
 
-    /* CPU2 Shutdown — guarded same as _enter_stop2_raw */
-    if (BLE_IsIdle()) {
+    /* CPU2 Shutdown — same guard as _enter_stop2_raw */
+    if (BLE_IsIdle() && !BLE_CPU2Initialized()) {
         MODIFY_REG(PWR->C2CR1, PWR_C2CR1_LPMS,
                    PWR_C2CR1_LPMS_2 | PWR_C2CR1_LPMS_1 | PWR_C2CR1_LPMS_0);
     }
@@ -316,6 +329,12 @@ void Power_EnterStop1(uint32_t seconds)
     /* CPU1 → Stop1 (LPMS = 001) */
     MODIFY_REG(PWR->CR1, PWR_CR1_LPMS, PWR_CR1_LPMS_0);
     SET_BIT(SCB->SCR, SCB_SCR_SLEEPDEEP_Msk);
+
+    /* Belt-and-suspenders: same VREFEN/TSEN guard as _enter_stop2_raw */
+    __HAL_RCC_ADC_CLK_ENABLE();
+    CLEAR_BIT(ADC1_COMMON->CCR, ADC_CCR_VREFEN | ADC_CCR_TSEN);
+    __DSB();
+    __HAL_RCC_ADC_CLK_DISABLE();
 
     __DSB(); __ISB(); __WFI();
 
