@@ -107,3 +107,9 @@ const int logMaskTemp       = 0x01;
 const int logMaskLight      = 0x02;
 const int logMaskBattPct    = 0x04;
 const int logMaskBattMv     = 0x08;
+
+// Event rule engine opcodes (0x80–0x82)
+const int opEventGet        = 0x80; // → 84 bytes (7 × 12)
+const int opEventSet        = 0x81; // index(1) + event(12) → ok
+const int opEventClear      = 0x82; // index(1), 0xFF=all → ok
+const int eventBlobSize     = 84;   // 7 events × 12 bytes
