@@ -345,20 +345,40 @@ class NusTransport {
     return r.rc;
   }
 
-  /// Write full ConfigBlob (64 bytes) then commit.
+  /// Write ConfigBlob via text verb CFG! (mirrors PC-app UART path).
+  /// CFG! immediately calls _apply_cfg() in firmware — live effect without reboot.
+  /// SAVE! defers flash write when BLE is active (firmware does it after disconnect).
   Future<bool> writeConfig(ConfigBlob cfg) async {
-    final raw = cfg.toBytes();
-    final rc1 = await cmdConfigWrite(0, raw);
-    if (rc1 != cmdOk) return false;
-    final rc2 = await cmdConfigCommit();
-    return rc2 == cmdOk;
+    final hexStr = _bytesToHex(cfg.toBytes());
+    final (ok1, _) = await _request('CFG!', payload: hexStr,
+        timeout: const Duration(seconds: 8));
+    if (!ok1) return false;
+    final (ok2, _) = await _request('SAVE!',
+        timeout: const Duration(seconds: 5));
+    return ok2;
   }
 
+  /// Read ConfigBlob via text verb CFG? (mirrors PC-app UART path).
+  /// OP_CONFIG_READ returns raw TxConfigV2_t bytes (different layout) — cannot be
+  /// parsed as ConfigBlob. CFG? returns the proper 64-byte ConfigBlob hex.
   Future<ConfigBlob?> readConfig() async {
-    final raw = await cmdConfigRead();
-    if (raw.length < 64) return null;
-    final c = ConfigBlob.fromBytes(Uint8List.fromList(raw.sublist(0, 64)));
-    return c.verifyCrc() ? c : null;
+    final (ok, lines) = await _request('CFG?');
+    if (!ok) return null;
+    // Use regex — _reqId may differ if concurrent requests ran during await
+    final re = RegExp(r'^#\d+ CFG ([0-9A-Fa-f]+)$');
+    for (final l in lines) {
+      final m = re.firstMatch(l);
+      if (m != null) {
+        try {
+          final raw = _hexToBytes(m.group(1)!);
+          if (raw.length >= 64) {
+            final c = ConfigBlob.fromBytes(Uint8List.fromList(raw.sublist(0, 64)));
+            return c.verifyCrc() ? c : null;
+          }
+        } catch (_) {}
+      }
+    }
+    return null;
   }
 
   Future<StatusBlob?> readStatus() async {
