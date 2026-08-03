@@ -189,12 +189,17 @@ class _DataTabState extends State<DataTab> {
   }
 
   void _confirmErase(BuildContext ctx, BeaconProvider beacon) {
+    final usedNow  = beacon.logUsed;
+    final totalNow = beacon.logTotal > 0 ? beacon.logTotal : 1;
+    final pctNow   = (usedNow * 100 ~/ totalNow).clamp(0, 100);
+
     showDialog(
       context: ctx,
       builder: (_) => AlertDialog(
         title: const Text('Erase flash memory?'),
-        content: const Text(
+        content: Text(
             'All logged data on the beacon will be permanently deleted.\n\n'
+            'Records stored: $usedNow / $totalNow ($pctNow% full).\n\n'
             'Export CSV first if you want to save the data.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
@@ -205,8 +210,11 @@ class _DataTabState extends State<DataTab> {
               final ok = await beacon.eraseLog();
               if (ctx.mounted) {
                 ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
-                  content: Text(ok ? 'Flash erased' : 'Erase failed'),
+                  content: Text(ok
+                      ? 'Erased $usedNow records ($pctNow% of capacity)'
+                      : 'Erase failed'),
                   backgroundColor: ok ? Colors.green : Colors.red,
+                  duration: const Duration(seconds: 4),
                 ));
               }
             },

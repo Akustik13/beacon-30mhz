@@ -430,12 +430,13 @@ class NusTransport {
     if (r.rc != cmdOk || r.data.length < 18) return null;
     final bd = ByteData.sublistView(r.data);
     return {
-      'total':    bd.getUint32(0,  Endian.little),
-      'used':     bd.getUint32(4,  Endian.little),
-      'head':     bd.getUint32(8,  Endian.little),
-      'tail':     bd.getUint32(12, Endian.little),
-      'rec_size': r.data[16],
-      'fmt_ver':  r.data[17],
+      'total':     bd.getUint32(0,  Endian.little),
+      'used':      bd.getUint32(4,  Endian.little),
+      'head':      bd.getUint32(8,  Endian.little),
+      'tail':      bd.getUint32(12, Endian.little),
+      'rec_size':  r.data[16],
+      'fmt_ver':   r.data[17],
+      'ts_source': r.data.length >= 19 ? r.data[18] : 0, // 0=BOOT, 1=RTC epoch2000
     };
   }
 
