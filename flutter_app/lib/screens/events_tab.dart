@@ -233,21 +233,16 @@ class _EventEditorPageState extends State<_EventEditorPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.close),
+          tooltip: 'Cancel',
+          onPressed: () => Navigator.pop(context),
+        ),
         title: Text('Event ${widget.index + 1}'),
-        actions: [
-          TextButton(
-            onPressed: _clear,
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('Clear'),
-          ),
-          FilledButton(
-            onPressed: _save,
-            child: const Text('Save'),
-          ),
-          const SizedBox(width: 8),
-        ],
       ),
-      body: SingleChildScrollView(
+      body: Column(
+        children: [
+        Expanded(child: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -353,6 +348,29 @@ class _EventEditorPageState extends State<_EventEditorPage> {
             ),
           ],
         ),
+      )),
+
+      // ── Fixed bottom buttons ─────────────────────────────────────────────
+      SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+          child: Row(children: [
+            OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
+              onPressed: _clear,
+              icon: const Icon(Icons.delete_outline, size: 18),
+              label: const Text('Clear slot'),
+            ),
+            const Spacer(),
+            FilledButton.icon(
+              onPressed: _save,
+              icon: const Icon(Icons.check, size: 18),
+              label: const Text('Save'),
+            ),
+          ]),
+        ),
+      ),
+        ],
       ),
     );
   }
