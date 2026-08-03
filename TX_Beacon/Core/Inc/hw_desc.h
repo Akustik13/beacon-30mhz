@@ -28,13 +28,7 @@
 
 /* ── Constants ────────────────────────────────────────────────────────────── */
 #define HW_DESC_MAGIC  0xBEAC0002UL
-/* Page 59 in default layout. In OTA_LAYOUT: relocated to page 98 because
- * page 59 falls inside Slot B (pages 47-88) and would be erased during OTA. */
-#ifdef OTA_LAYOUT
-  #define HW_DESC_PAGE   98U
-#else
-  #define HW_DESC_PAGE   59U
-#endif
+#define HW_DESC_PAGE   59U
 #define HW_DESC_ADDR   (0x08000000UL + (uint32_t)HW_DESC_PAGE * 2048UL)
 
 /* Tag max length (chars, including null). Bound to MCU UID — set once per device. */
