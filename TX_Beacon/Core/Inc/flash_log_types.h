@@ -1,17 +1,28 @@
 #pragma once
 #include <stdint.h>
 
-/* ── Page map (WB1M: 2KB pages, config=page60, BLE=page68+) ─────────────── */
+/* ── Page map (WB1M: 2KB pages) ─────────────────────────────────────────── */
 #ifndef FLASH_PAGE_SIZE
 #define FLASH_PAGE_SIZE           2048U
 #endif
 #define FLASH_BASE_ADDR           0x08000000UL
-#define BLE_STACK_FIRST_PAGE      68U
 
-/* Config is on page 60 → log uses pages 61-67 */
-#define LOG_HEADER_PAGE           61U
-#define LOG_DATA_START_PAGE       62U
-#define LOG_DATA_END_PAGE         67U
+/* OTA_LAYOUT (production, BLE light stack reflashed):
+ *   Config = page 90, Log = pages 91-98, BLE light @ page 99+
+ * Default (development, BLE full stack):
+ *   Config = page 60, Log = pages 61-67, BLE full @ page 68+
+ */
+#ifdef OTA_LAYOUT
+  #define BLE_STACK_FIRST_PAGE    99U   /* update after verifying SFSA option byte */
+  #define LOG_HEADER_PAGE         91U
+  #define LOG_DATA_START_PAGE     92U
+  #define LOG_DATA_END_PAGE       97U   /* 6 pages = 768 entries (same as original) */
+#else
+  #define BLE_STACK_FIRST_PAGE    68U
+  #define LOG_HEADER_PAGE         61U
+  #define LOG_DATA_START_PAGE     62U
+  #define LOG_DATA_END_PAGE       67U   /* 6 pages = 768 entries                    */
+#endif
 
 #define LOG_HEADER_ADDR  (FLASH_BASE_ADDR + (uint32_t)LOG_HEADER_PAGE * FLASH_PAGE_SIZE)
 #define LOG_DATA_START   (FLASH_BASE_ADDR + (uint32_t)LOG_DATA_START_PAGE * FLASH_PAGE_SIZE)

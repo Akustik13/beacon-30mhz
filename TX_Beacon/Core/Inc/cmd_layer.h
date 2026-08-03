@@ -133,6 +133,14 @@
 #define WAKE_ACTION_TX_BURST   (1U << 1)  /* start a transmission burst       */
 #define WAKE_ACTION_LOG_MARKER (1U << 2)  /* write marker record to log       */
 
+/* OTA (dual-slot bootloader, see drv_ota.h) */
+#define OP_OTA_STATUS    0x80U  /* — → active(1) pending(1) att(1) a_ver(4) b_ver(4) a_crc(4) b_crc(4) */
+#define OP_OTA_BEGIN     0x81U  /* total_size(4) version(4) crc32(4) → OK      */
+#define OP_OTA_CHUNK     0x82U  /* offset(4) data(≤116) → OK next_offset(4)    */
+#define OP_OTA_FINISH    0x83U  /* — → OK (pending reboot) or ERR crc          */
+#define OP_OTA_ABORT     0x84U  /* — → OK                                      */
+#define OP_OTA_REBOOT    0x85U  /* — → OK then MCU reset (bootloader picks up) */
+
 /* ── Dispatch API ─────────────────────────────────────────────────────────── */
 
 /* Maximum payload sizes (caller must provide buffers at least this large).   */
