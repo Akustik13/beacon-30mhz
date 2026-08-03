@@ -488,8 +488,10 @@ class _LineChartCard extends StatelessWidget {
     ]);
   }
 
-  List<FlSpot> _toSpots(List<ChartPoint> pts) =>
-      pts.map((p) => FlSpot(p.ts.millisecondsSinceEpoch / 1000, p.value)).toList();
+  List<FlSpot> _toSpots(List<ChartPoint> pts) {
+    final sorted = pts.toList()..sort((a, b) => a.ts.compareTo(b.ts));
+    return sorted.map((p) => FlSpot(p.ts.millisecondsSinceEpoch / 1000, p.value)).toList();
+  }
 }
 
 class _StatBadge extends StatelessWidget {

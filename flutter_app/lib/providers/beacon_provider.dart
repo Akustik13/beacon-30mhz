@@ -377,9 +377,11 @@ class BeaconProvider extends ChangeNotifier {
 
       // Fix timestamps before plotting.
       // BOOT timestamps are seconds from last boot (resets to 0 each reboot) — anchor the
-      // last record to "now" so the chart shows real calendar time for the current session.
+      // highest-ts record to "now" so the chart shows real calendar time for the current session.
       // RTC timestamps are seconds since 2000-01-01 00:00:00 (not Unix 1970 epoch) — add
       // the 30-year offset so DateTime.fromMillisecondsSinceEpoch() returns correct dates.
+      // After fixing, sort by timestamp — circular flash reads come in ring order (not
+      // chronological), so minX/maxX from first/last spot would be inverted without sorting.
       if (entries.isNotEmpty) {
         const epoch2000ToUnix = 946684800; // seconds from 1970-01-01 to 2000-01-01
         if (tsSource == 1 /* LOG_TS_RTC */) {
@@ -387,14 +389,19 @@ class BeaconProvider extends ChangeNotifier {
             final ts = (e['ts'] as int?) ?? 0;
             e['ts'] = ts + epoch2000ToUnix;
           }
-        } else /* LOG_TS_BOOT — anchor last record to now */ {
-          final lastTs = (entries.last['ts'] as int?) ?? 0;
-          final nowS   = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+        } else /* LOG_TS_BOOT — anchor highest-ts record to now */ {
+          final maxTs = entries
+              .map((e) => (e['ts'] as int?) ?? 0)
+              .reduce((a, b) => a > b ? a : b);
+          final nowS = DateTime.now().millisecondsSinceEpoch ~/ 1000;
           for (final e in entries) {
             final ts = (e['ts'] as int?) ?? 0;
-            e['ts'] = nowS - (lastTs - ts);
+            e['ts'] = nowS - (maxTs - ts);
           }
         }
+        // Sort chronologically — ring-buffer reads are NOT in time order
+        entries.sort((a, b) =>
+            ((a['ts'] as int?) ?? 0).compareTo((b['ts'] as int?) ?? 0));
       }
       for (final e in entries) _dispatchToLogChart(e);
       logEntries = entries;
