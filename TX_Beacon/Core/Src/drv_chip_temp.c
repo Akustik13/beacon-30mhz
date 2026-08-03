@@ -55,6 +55,11 @@ void HAL_ADC_MspDeInit(ADC_HandleTypeDef *hadc)
          * APB2 clock, causing the write to be lost and VREFEN/TSEN to remain
          * set (~11 µA extra in Stop1). __DSB() drains the buffer first. */
         CLEAR_BIT(ADC1_COMMON->CCR, ADC_CCR_VREFEN | ADC_CCR_TSEN);
+        /* HAL_ADC_Init sets ADVREGEN=1; HAL_ADC_DeInit does NOT clear it,
+         * leaving the ADC voltage regulator active in Stop1/Stop2 (~12 µA).
+         * STM32WB1M (ADC_SUPPORT_2_5_MSPS) has no DEEPPWD bit — clearing
+         * ADVREGEN is sufficient to power down the analog block. */
+        CLEAR_BIT(ADC1->CR, ADC_CR_ADVREGEN);
         __DSB();
         __HAL_RCC_ADC_CLK_DISABLE();
     }
