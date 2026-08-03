@@ -92,7 +92,7 @@ class _OfflineBanner extends StatelessWidget {
   }
 }
 
-// ── Event card (read-only summary + edit button) ───────────────────────────────
+// ── Event card ────────────────────────────────────────────────────────────────
 
 class _EventCard extends StatelessWidget {
   final int         index;
@@ -127,7 +127,7 @@ class _EventCard extends StatelessWidget {
           ),
         ),
         title: isEmpty
-            ? Text('Empty slot — tap to configure',
+            ? Text('Empty slot — tap ✎ to configure',
                 style: TextStyle(
                     color: cs.onSurfaceVariant,
                     fontStyle: FontStyle.italic,
@@ -153,10 +153,12 @@ class _EventCard extends StatelessWidget {
   }
 
   Future<void> _openEditor(BuildContext context) async {
-    final result = await showDialog<_EditorResult>(
+    final result = await showModalBottomSheet<_EditorResult>(
       context: context,
-      barrierDismissible: true,
-      builder: (_) => _EventEditorDialog(index: index, initial: event),
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _EventEditorSheet(index: index, initial: event),
     );
     if (result == null || !context.mounted) return;
     final beacon = context.read<BeaconProvider>();
@@ -168,7 +170,7 @@ class _EventCard extends StatelessWidget {
   }
 }
 
-// ── Editor result (returned from dialog) ──────────────────────────────────────
+// ── Editor result ──────────────────────────────────────────────────────────────
 
 class _EditorResult {
   final bool        clear;
@@ -176,18 +178,18 @@ class _EditorResult {
   const _EditorResult({this.clear = false, required this.event});
 }
 
-// ── Event editor dialog ────────────────────────────────────────────────────────
+// ── Event editor bottom sheet ──────────────────────────────────────────────────
 
-class _EventEditorDialog extends StatefulWidget {
+class _EventEditorSheet extends StatefulWidget {
   final int         index;
   final BeaconEvent initial;
-  const _EventEditorDialog({required this.index, required this.initial});
+  const _EventEditorSheet({required this.index, required this.initial});
 
   @override
-  State<_EventEditorDialog> createState() => _EventEditorDialogState();
+  State<_EventEditorSheet> createState() => _EventEditorSheetState();
 }
 
-class _EventEditorDialogState extends State<_EventEditorDialog> {
+class _EventEditorSheetState extends State<_EventEditorSheet> {
   late BeaconEvent _ev;
   late TextEditingController _condValCtrl;
   late TextEditingController _p1Ctrl;
@@ -215,155 +217,184 @@ class _EventEditorDialogState extends State<_EventEditorDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text('Event ${widget.index + 1}'),
-      contentPadding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
-      content: SizedBox(
-        width: double.maxFinite,
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // ── Condition ─────────────────────────────────────────────────
-              _SectionLabel('Condition'),
-              const SizedBox(height: 6),
-              DropdownButtonFormField<int>(
-                value: _ev.condType,
-                isExpanded: true,
-                decoration: const InputDecoration(
-                    labelText: 'Trigger',
-                    isDense: true,
-                    border: OutlineInputBorder()),
-                items: condLabel.entries
-                    .map((e) => DropdownMenuItem(
-                          value: e.key,
-                          child: Text(e.value,
-                              overflow: TextOverflow.ellipsis),
-                        ))
-                    .toList(),
-                onChanged: (v) => setState(() {
-                  _ev.condType = v!;
-                  if (condNoValue.contains(v)) {
-                    _condValCtrl.text = '0';
-                    _ev.condVal = 0;
-                  }
-                }),
-              ),
-              if (!condNoValue.contains(_ev.condType)) ...[
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _condValCtrl,
-                  decoration: InputDecoration(
-                    labelText: _condValueLabel(_ev.condType),
-                    isDense: true,
-                    border: const OutlineInputBorder(),
-                  ),
-                  keyboardType:
-                      const TextInputType.numberWithOptions(signed: true),
-                  inputFormatters: [
-                    FilteringTextInputFormatter.allow(RegExp(r'-?\d*'))
-                  ],
-                  onChanged: (s) => _ev.condVal = int.tryParse(s) ?? 0,
+    final cs     = Theme.of(context).colorScheme;
+    final bottom = MediaQuery.of(context).viewInsets.bottom;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: cs.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      padding: EdgeInsets.fromLTRB(16, 0, 16, bottom + 16),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // drag handle
+            Center(
+              child: Container(
+                margin: const EdgeInsets.symmetric(vertical: 10),
+                width: 40, height: 4,
+                decoration: BoxDecoration(
+                  color: cs.onSurfaceVariant.withValues(alpha: 0.4),
+                  borderRadius: BorderRadius.circular(2),
                 ),
-              ],
-              const SizedBox(height: 4),
-              CheckboxListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                controlAffinity: ListTileControlAffinity.leading,
-                value: _ev.invertCond,
-                onChanged: (v) => setState(() => _ev.invertCond = v!),
-                title: const Text('Invert condition (NOT)',
-                    style: TextStyle(fontSize: 13)),
               ),
-
-              const SizedBox(height: 12),
-
-              // ── Action ────────────────────────────────────────────────────
-              _SectionLabel('Action'),
-              const SizedBox(height: 6),
-              DropdownButtonFormField<int>(
-                value: _ev.actType,
-                isExpanded: true,
-                decoration: const InputDecoration(
-                    labelText: 'Do',
-                    isDense: true,
-                    border: OutlineInputBorder()),
-                items: actLabel.entries
-                    .map((e) => DropdownMenuItem(
-                          value: e.key,
-                          child: Text(e.value,
-                              overflow: TextOverflow.ellipsis),
-                        ))
-                    .toList(),
-                onChanged: (v) => setState(() => _ev.actType = v!),
+            ),
+            // title
+            Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: Text(
+                'Event ${widget.index + 1}',
+                style: Theme.of(context).textTheme.titleMedium,
               ),
-              const SizedBox(height: 8),
-              _buildActionParams(),
+            ),
 
-              const SizedBox(height: 12),
-
-              // ── Options ───────────────────────────────────────────────────
-              _SectionLabel('Options'),
-              const SizedBox(height: 6),
-              TextField(
-                controller: _coolCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Cooldown (TX cycles)',
-                  hintText: '0 = always trigger',
+            // ── Condition ─────────────────────────────────────────────────
+            _SectionLabel('Condition'),
+            const SizedBox(height: 6),
+            DropdownButtonFormField<int>(
+              value: _ev.condType,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                  labelText: 'Trigger',
                   isDense: true,
-                  border: OutlineInputBorder(),
+                  border: OutlineInputBorder()),
+              items: condLabel.entries
+                  .map((e) => DropdownMenuItem(
+                        value: e.key,
+                        child: Text(e.value, overflow: TextOverflow.ellipsis),
+                      ))
+                  .toList(),
+              onChanged: (v) => setState(() {
+                _ev.condType = v!;
+                if (condNoValue.contains(v)) {
+                  _condValCtrl.text = '0';
+                  _ev.condVal = 0;
+                }
+              }),
+            ),
+            if (!condNoValue.contains(_ev.condType)) ...[
+              const SizedBox(height: 8),
+              TextField(
+                controller: _condValCtrl,
+                decoration: InputDecoration(
+                  labelText: _condValueLabel(_ev.condType),
+                  isDense: true,
+                  border: const OutlineInputBorder(),
                 ),
-                keyboardType: TextInputType.number,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                onChanged: (s) => _ev.cooldown = int.tryParse(s) ?? 0,
+                keyboardType:
+                    const TextInputType.numberWithOptions(signed: true),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'-?\d*'))
+                ],
+                onChanged: (s) => _ev.condVal = int.tryParse(s) ?? 0,
               ),
-              const SizedBox(height: 4),
-              CheckboxListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                controlAffinity: ListTileControlAffinity.leading,
-                value: _ev.enabled,
-                onChanged: (v) => setState(() => _ev.enabled = v!),
-                title: const Text('Enabled', style: TextStyle(fontSize: 13)),
-              ),
-              CheckboxListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                controlAffinity: ListTileControlAffinity.leading,
-                value: _ev.oneShot,
-                onChanged: (v) => setState(() => _ev.oneShot = v!),
-                title: const Text('One-shot (fire once, then disable)',
-                    style: TextStyle(fontSize: 13)),
-              ),
-              const SizedBox(height: 4),
             ],
-          ),
+            const SizedBox(height: 4),
+            CheckboxListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              controlAffinity: ListTileControlAffinity.leading,
+              value: _ev.invertCond,
+              onChanged: (v) => setState(() => _ev.invertCond = v!),
+              title: const Text('Invert condition (NOT)',
+                  style: TextStyle(fontSize: 13)),
+            ),
+
+            const SizedBox(height: 12),
+
+            // ── Action ────────────────────────────────────────────────────
+            _SectionLabel('Action'),
+            const SizedBox(height: 6),
+            DropdownButtonFormField<int>(
+              value: _ev.actType,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                  labelText: 'Do',
+                  isDense: true,
+                  border: OutlineInputBorder()),
+              items: actLabel.entries
+                  .map((e) => DropdownMenuItem(
+                        value: e.key,
+                        child: Text(e.value, overflow: TextOverflow.ellipsis),
+                      ))
+                  .toList(),
+              onChanged: (v) => setState(() => _ev.actType = v!),
+            ),
+            const SizedBox(height: 8),
+            _buildActionParams(),
+
+            const SizedBox(height: 12),
+
+            // ── Options ───────────────────────────────────────────────────
+            _SectionLabel('Options'),
+            const SizedBox(height: 6),
+            TextField(
+              controller: _coolCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Cooldown (TX cycles)',
+                hintText: '0 = always trigger',
+                isDense: true,
+                border: OutlineInputBorder(),
+              ),
+              keyboardType: TextInputType.number,
+              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              onChanged: (s) => _ev.cooldown = int.tryParse(s) ?? 0,
+            ),
+            const SizedBox(height: 4),
+            Row(children: [
+              Expanded(
+                child: CheckboxListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  value: _ev.enabled,
+                  onChanged: (v) => setState(() => _ev.enabled = v!),
+                  title: const Text('Enabled',
+                      style: TextStyle(fontSize: 13)),
+                ),
+              ),
+              Expanded(
+                child: CheckboxListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  value: _ev.oneShot,
+                  onChanged: (v) => setState(() => _ev.oneShot = v!),
+                  title: const Text('One-shot',
+                      style: TextStyle(fontSize: 13)),
+                ),
+              ),
+            ]),
+
+            const SizedBox(height: 16),
+
+            // ── Buttons ───────────────────────────────────────────────────
+            Row(children: [
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(foregroundColor: Colors.red),
+                onPressed: () => Navigator.pop(
+                    context, _EditorResult(clear: true, event: _ev)),
+                icon: const Icon(Icons.delete_outline, size: 18),
+                label: const Text('Clear'),
+              ),
+              const Spacer(),
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              const SizedBox(width: 8),
+              FilledButton.icon(
+                onPressed: _submit,
+                icon: const Icon(Icons.check, size: 18),
+                label: const Text('Save'),
+              ),
+            ]),
+          ],
         ),
       ),
-      actionsAlignment: MainAxisAlignment.spaceBetween,
-      actions: [
-        TextButton.icon(
-          style: TextButton.styleFrom(foregroundColor: Colors.red),
-          onPressed: () => Navigator.pop(
-              context, _EditorResult(clear: true, event: _ev)),
-          icon: const Icon(Icons.delete_outline, size: 18),
-          label: const Text('Clear slot'),
-        ),
-        Row(mainAxisSize: MainAxisSize.min, children: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          const SizedBox(width: 8),
-          FilledButton.icon(
-            onPressed: _submit,
-            icon: const Icon(Icons.check, size: 18),
-            label: const Text('Save'),
-          ),
-        ]),
-      ],
     );
   }
 
@@ -374,7 +405,7 @@ class _EventEditorDialogState extends State<_EventEditorDialog> {
           label: 'Power level',
           ctrl: _p1Ctrl,
           options: const {0: 'Low (0)', 1: 'Mid (1)', 2: 'High (2)'},
-          onSel: (v) => _ev.actParam1 = v,
+          onSel: (v) => setState(() => _ev.actParam1 = v),
         );
 
       case actSetChannel:
@@ -382,34 +413,38 @@ class _EventEditorDialogState extends State<_EventEditorDialog> {
           label: 'Channel',
           ctrl: _p1Ctrl,
           options: const {1: 'CH1', 2: 'CH2', 3: 'Both'},
-          onSel: (v) => _ev.actParam1 = v,
+          onSel: (v) => setState(() => _ev.actParam1 = v),
         );
 
       case actTxPulses:
         return Row(children: [
-          Expanded(child: _numField(_p1Ctrl, 'Count', '1',
-              (v) => _ev.actParam1 = v)),
+          Expanded(
+              child: _numField(_p1Ctrl, 'Count', '1',
+                  (v) => _ev.actParam1 = v)),
           const SizedBox(width: 8),
-          Expanded(child: _numField(_p2Ctrl, 'Gap (ms)', '200',
-              (v) => _ev.actParam2 = v)),
+          Expanded(
+              child: _numField(_p2Ctrl, 'Gap (ms)', '200',
+                  (v) => _ev.actParam2 = v)),
         ]);
 
       case actTxPattern:
         return Row(children: [
-          Expanded(child: _numField(_p1Ctrl, 'ON (ms)', '100',
-              (v) => _ev.actParam1 = v)),
+          Expanded(
+              child: _numField(_p1Ctrl, 'ON (ms)', '100',
+                  (v) => _ev.actParam1 = v)),
           const SizedBox(width: 8),
-          Expanded(child: _numField(_p2Ctrl, 'OFF (ms)', '900',
-              (v) => _ev.actParam2 = v)),
+          Expanded(
+              child: _numField(_p2Ctrl, 'OFF (ms)', '900',
+                  (v) => _ev.actParam2 = v)),
         ]);
 
       case actSetPeriod:
-        return _numField(_p1Ctrl, 'Period (s)', '60',
-            (v) => _ev.actParam1 = v);
+        return _numField(
+            _p1Ctrl, 'Period (s)', '60', (v) => _ev.actParam1 = v);
 
       case actLogMarker:
-        return _numField(_p1Ctrl, 'Marker code', '1',
-            (v) => _ev.actParam1 = v);
+        return _numField(
+            _p1Ctrl, 'Marker code', '1', (v) => _ev.actParam1 = v);
 
       default:
         return const SizedBox.shrink();
@@ -422,21 +457,23 @@ class _EventEditorDialogState extends State<_EventEditorDialog> {
     required Map<int, String> options,
     required void Function(int) onSel,
   }) {
-    final current = int.tryParse(ctrl.text) ?? options.keys.first;
-    final val = options.containsKey(current) ? current : options.keys.first;
+    final parsed = int.tryParse(ctrl.text) ?? options.keys.first;
+    final val    = options.containsKey(parsed) ? parsed : options.keys.first;
 
     return DropdownButtonFormField<int>(
       value: val,
       isExpanded: true,
       decoration: InputDecoration(
-          labelText: label, isDense: true, border: const OutlineInputBorder()),
+          labelText: label,
+          isDense: true,
+          border: const OutlineInputBorder()),
       items: options.entries
           .map((e) => DropdownMenuItem(value: e.key, child: Text(e.value)))
           .toList(),
-      onChanged: (v) => setState(() {
+      onChanged: (v) {
         ctrl.text = v.toString();
         onSel(v!);
-      }),
+      },
     );
   }
 
@@ -466,15 +503,15 @@ class _EventEditorDialogState extends State<_EventEditorDialog> {
   static String _condValueLabel(int cond) {
     switch (cond) {
       case condBatteryBelow:
-      case condBatteryAbove:  return '% (0–100)';
+      case condBatteryAbove: return '% (0–100)';
       case condTempAbove:
-      case condTempBelow:     return '°C';
-      case condNoMotion:      return 'N cycles';
+      case condTempBelow:    return '°C';
+      case condNoMotion:     return 'N cycles';
       case condLightBelow:
-      case condLightAbove:    return '% (0–100)';
-      case condEveryNcycles:  return 'N TX cycles';
-      case condEveryNhours:   return 'N hours';
-      default:                return 'Value';
+      case condLightAbove:   return '% (0–100)';
+      case condEveryNcycles: return 'N TX cycles';
+      case condEveryNhours:  return 'N hours';
+      default:               return 'Value';
     }
   }
 }
