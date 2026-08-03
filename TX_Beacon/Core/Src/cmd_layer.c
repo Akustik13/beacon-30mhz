@@ -1,5 +1,4 @@
 #include "cmd_layer.h"
-#include "drv_ota.h"
 #include "app_ble.h"
 #include "ble_hci_le.h"
 #include "flash_config.h"
@@ -898,78 +897,6 @@ static uint8_t _op_measure_all(uint8_t *out, uint8_t *out_len)
     return CMD_OK;
 }
 
-/* ── OTA handlers ────────────────────────────────────────────────────────── */
-
-/* 0x80  OTA_STATUS */
-static uint8_t _op_ota_status(uint8_t *out, uint8_t *out_len)
-{
-    OTA_GetStatus(out, out_len);
-    return CMD_OK;
-}
-
-/* 0x81  OTA_BEGIN  total_size(4) version(4) crc32(4) */
-static uint8_t _op_ota_begin(const uint8_t *in, uint8_t in_len, uint8_t *out_len)
-{
-    *out_len = 0U;
-    if (in_len < 12U) return CMD_ERR_LEN;
-    uint32_t sz  = _get_u32(&in[0]);
-    uint32_t ver = _get_u32(&in[4]);
-    uint32_t crc = _get_u32(&in[8]);
-    uint8_t  res = OTA_Begin(sz, ver, crc);
-    if (res == OTA_OK) return CMD_OK;
-    if (res == OTA_ERR_SIZE)  return CMD_ERR_PARAM;
-    if (res == OTA_ERR_BUSY)  return CMD_ERR_BUSY;
-    if (res == OTA_ERR_STATE) return CMD_ERR_STATE;
-    return CMD_ERR_FLASH;
-}
-
-/* 0x82  OTA_CHUNK  offset(4) data(≤116 bytes) → OK next_offset(4) */
-static uint8_t _op_ota_chunk(const uint8_t *in, uint8_t in_len,
-                              uint8_t *out, uint8_t *out_len)
-{
-    *out_len = 0U;
-    if (in_len < 5U) return CMD_ERR_LEN;
-    uint32_t offset  = _get_u32(&in[0]);
-    uint8_t  datalen = in_len - 4U;
-    uint8_t  res = OTA_Chunk(offset, &in[4], datalen);
-    if (res != OTA_OK) {
-        if (res == OTA_ERR_OFFSET) return CMD_ERR_PARAM;
-        if (res == OTA_ERR_SIZE)   return CMD_ERR_PARAM;
-        if (res == OTA_ERR_STATE)  return CMD_ERR_STATE;
-        return CMD_ERR_FLASH;
-    }
-    _put_u32(out, offset + datalen);
-    *out_len = 4U;
-    return CMD_OK;
-}
-
-/* 0x83  OTA_FINISH */
-static uint8_t _op_ota_finish(uint8_t *out_len)
-{
-    *out_len = 0U;
-    uint8_t res = OTA_Finish();
-    if (res == OTA_OK)       return CMD_OK;
-    if (res == OTA_ERR_CRC)  return CMD_ERR_CRC;
-    if (res == OTA_ERR_STATE) return CMD_ERR_STATE;
-    return CMD_ERR_FLASH;
-}
-
-/* 0x84  OTA_ABORT */
-static uint8_t _op_ota_abort(uint8_t *out_len)
-{
-    *out_len = 0U;
-    OTA_Abort();
-    return CMD_OK;
-}
-
-/* 0x85  OTA_REBOOT — same mechanic as OP_REBOOT but marks OTA reboot */
-static uint8_t _op_ota_reboot(uint8_t *out_len)
-{
-    *out_len = 0U;
-    s_reboot_pending = 1U;  /* transport sends RSP, then calls HAL_NVIC_SystemReset */
-    return CMD_OK;
-}
-
 uint8_t CmdLayer_Dispatch(uint8_t opcode,
                            const uint8_t *in,  uint8_t in_len,
                            uint8_t       *out, uint8_t *out_len)
@@ -1023,14 +950,6 @@ uint8_t CmdLayer_Dispatch(uint8_t opcode,
     case OP_BLE_SET:        res = _op_ble_set(in, in_len, out_len); break;
     case OP_BLE_RSSI:       res = _op_ble_rssi(out, out_len); break;
     case OP_MEASURE_ALL:    res = _op_measure_all(out, out_len); break;
-
-    /* OTA */
-    case OP_OTA_STATUS: res = _op_ota_status(out, out_len); break;
-    case OP_OTA_BEGIN:  res = _op_ota_begin(in, in_len, out_len); break;
-    case OP_OTA_CHUNK:  res = _op_ota_chunk(in, in_len, out, out_len); break;
-    case OP_OTA_FINISH: res = _op_ota_finish(out_len); break;
-    case OP_OTA_ABORT:  res = _op_ota_abort(out_len); break;
-    case OP_OTA_REBOOT: res = _op_ota_reboot(out_len); break;
 
     default:
         *out_len = 0U;
