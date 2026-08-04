@@ -144,6 +144,7 @@ ICO = {
     'warn':     '⚠',
     'connect':  '🔗',
     'ble':      '📶',
+    'events':   '⚡',
 }
 
 def build_qss(C: dict) -> str:
@@ -671,6 +672,48 @@ BLE_OP_OFF        = 0x00
 BLE_OP_CONTINUOUS = 0x01
 BLE_OP_SCHEDULE   = 0x02
 BLE_OP_GEKON      = 0x04
+
+# ── Events protocol (opcodes 0x80-0x82, blob = 4 × 28 = 112 bytes) ───────────
+MAX_EVENTS      = 4
+MAX_CONDS       = 3
+EVENT_SIZE      = 28
+EVENTS_BLOB_SZ  = MAX_EVENTS * EVENT_SIZE   # 112 bytes
+OP_EVT_GET      = 0x80
+OP_EVT_SET      = 0x81
+OP_EVT_CLEAR    = 0x82
+EV_FLAG_ENABLED = 0x01
+EV_FLAG_ONESHOT = 0x02
+
+# Condition types
+COND_DISABLED   = 0x00; COND_BATT_BELOW  = 0x01; COND_BATT_ABOVE  = 0x02
+COND_TEMP_ABOVE = 0x03; COND_TEMP_BELOW  = 0x04; COND_NO_MOTION   = 0x05
+COND_MOTION     = 0x06; COND_LIGHT_BELOW = 0x07; COND_LIGHT_ABOVE = 0x08
+COND_EVERY_NCYC = 0x09; COND_ALWAYS      = 0x0A; COND_BEFORE_BLE  = 0x0B
+COND_EVERY_NHRS = 0x0C; COND_TIME_OF_DAY = 0x0D
+
+# Action types
+ACT_NONE = 0x00; ACT_SET_POWER = 0x01; ACT_TX_PULSES = 0x02
+ACT_TX_PAT = 0x03; ACT_BLE_START = 0x04; ACT_SET_CH = 0x05
+ACT_SET_PERIOD = 0x06; ACT_LOG_MARK = 0x07
+
+COND_LABELS = [
+    (COND_DISABLED,   'Disabled'),
+    (COND_BATT_BELOW, 'Battery below'),  (COND_BATT_ABOVE, 'Battery above'),
+    (COND_TEMP_ABOVE, 'Temp above'),     (COND_TEMP_BELOW, 'Temp below'),
+    (COND_NO_MOTION,  'No motion for'),  (COND_MOTION,     'Motion detected'),
+    (COND_LIGHT_BELOW,'Light below'),    (COND_LIGHT_ABOVE,'Light above'),
+    (COND_EVERY_NCYC, 'Every N TX cycles'),
+    (COND_ALWAYS,     'Always (every cycle)'),
+    (COND_BEFORE_BLE, 'Before BLE start'),
+    (COND_EVERY_NHRS, 'Every N hours'),
+    (COND_TIME_OF_DAY,'Time of day'),
+]
+ACT_LABELS = [
+    (ACT_NONE,       'No action'),      (ACT_SET_POWER,  'Set TX power'),
+    (ACT_TX_PULSES,  'Send N pulses'),  (ACT_TX_PAT,     'TX on/off pattern'),
+    (ACT_BLE_START,  'Start BLE'),      (ACT_SET_CH,     'Set channel'),
+    (ACT_SET_PERIOD, 'Set TX period'),  (ACT_LOG_MARK,   'Write log marker'),
+]
 
 # Nordic UART Service UUIDs — transparent UART protocol over BLE
 # Firmware must expose these two characteristics for CMD protocol to work.
@@ -5989,6 +6032,619 @@ class AppLogTab(QWidget):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Events tab helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+class _CondRow(QWidget):
+    """One condition row: type selector + context-aware parameter widgets."""
+    removed = pyqtSignal(object)   # self
+    changed = pyqtSignal()
+
+    # Condition category → stacked-widget page index
+    _PSTACK = {
+        COND_DISABLED:   0, COND_MOTION:     0, COND_ALWAYS:     0, COND_BEFORE_BLE: 0,
+        COND_BATT_BELOW: 1, COND_BATT_ABOVE: 1, COND_LIGHT_BELOW:1, COND_LIGHT_ABOVE:1,
+        COND_TEMP_ABOVE: 2, COND_TEMP_BELOW: 2,
+        COND_NO_MOTION:  3, COND_EVERY_NCYC: 3,
+        COND_EVERY_NHRS: 4,
+        COND_TIME_OF_DAY:5,
+    }
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._build()
+
+    def _build(self):
+        h = QHBoxLayout(self)
+        h.setContentsMargins(0, 3, 0, 3)
+        h.setSpacing(8)
+
+        self._type_cb = QComboBox()
+        self._type_cb.setFixedWidth(190)
+        for code, lbl in COND_LABELS:
+            self._type_cb.addItem(lbl, code)
+        h.addWidget(self._type_cb)
+
+        self._stack = QStackedWidget()
+        self._stack.setFixedHeight(30)
+
+        # Page 0: no params
+        self._stack.addWidget(QWidget())
+
+        # Page 1: % (battery / light)
+        p1 = QWidget(); l1 = QHBoxLayout(p1); l1.setContentsMargins(0,0,0,0); l1.setSpacing(4)
+        self._pct_spin = QSpinBox(); self._pct_spin.setRange(0, 100)
+        self._pct_spin.setSuffix(' %'); self._pct_spin.setFixedWidth(80)
+        self._pct_spin.valueChanged.connect(self.changed)
+        l1.addWidget(self._pct_spin); l1.addStretch()
+        self._stack.addWidget(p1)
+
+        # Page 2: temperature °C
+        p2 = QWidget(); l2 = QHBoxLayout(p2); l2.setContentsMargins(0,0,0,0); l2.setSpacing(4)
+        self._temp_spin = QSpinBox(); self._temp_spin.setRange(-50, 80)
+        self._temp_spin.setSuffix(' °C'); self._temp_spin.setFixedWidth(90)
+        self._temp_spin.valueChanged.connect(self.changed)
+        l2.addWidget(self._temp_spin); l2.addStretch()
+        self._stack.addWidget(p2)
+
+        # Page 3: N cycles (no-motion / every-N-cycles)
+        p3 = QWidget(); l3 = QHBoxLayout(p3); l3.setContentsMargins(0,0,0,0); l3.setSpacing(4)
+        self._cyc_spin = QSpinBox(); self._cyc_spin.setRange(1, 9999)
+        self._cyc_spin.setSuffix(' cycles'); self._cyc_spin.setFixedWidth(110)
+        self._cyc_spin.valueChanged.connect(self.changed)
+        l3.addWidget(self._cyc_spin); l3.addStretch()
+        self._stack.addWidget(p3)
+
+        # Page 4: N hours
+        p4 = QWidget(); l4 = QHBoxLayout(p4); l4.setContentsMargins(0,0,0,0); l4.setSpacing(4)
+        self._hrs_spin = QSpinBox(); self._hrs_spin.setRange(1, 168)
+        self._hrs_spin.setSuffix(' h'); self._hrs_spin.setFixedWidth(80)
+        self._hrs_spin.valueChanged.connect(self.changed)
+        l4.addWidget(self._hrs_spin); l4.addStretch()
+        self._stack.addWidget(p4)
+
+        # Page 5: time of day HH:MM:SS
+        p5 = QWidget(); l5 = QHBoxLayout(p5); l5.setContentsMargins(0,0,0,0); l5.setSpacing(3)
+        self._hh = QSpinBox(); self._hh.setRange(0, 23); self._hh.setSuffix('h')
+        self._hh.setFixedWidth(58); self._hh.valueChanged.connect(self.changed)
+        self._mm = QSpinBox(); self._mm.setRange(0, 59); self._mm.setSuffix('m')
+        self._mm.setFixedWidth(58); self._mm.valueChanged.connect(self.changed)
+        self._ss = QSpinBox(); self._ss.setRange(0, 59); self._ss.setSuffix('s')
+        self._ss.setFixedWidth(58); self._ss.valueChanged.connect(self.changed)
+        for w in (self._hh, QLabel(':'), self._mm, QLabel(':'), self._ss):
+            l5.addWidget(w)
+        l5.addStretch()
+        self._stack.addWidget(p5)
+
+        h.addWidget(self._stack, 1)
+
+        self._btn_rm = QPushButton('✕')
+        self._btn_rm.setFixedSize(26, 26)
+        self._btn_rm.setObjectName('secondary')
+        self._btn_rm.setToolTip('Remove this condition')
+        self._btn_rm.clicked.connect(lambda: self.removed.emit(self))
+        h.addWidget(self._btn_rm)
+
+        self._type_cb.currentIndexChanged.connect(self._on_type)
+        self._on_type()
+
+    def _on_type(self):
+        code = self._type_cb.currentData()
+        self._stack.setCurrentIndex(self._PSTACK.get(code, 0))
+        self.changed.emit()
+
+    def set_removable(self, v: bool):
+        self._btn_rm.setVisible(v)
+
+    def get_data(self) -> dict:
+        code = self._type_cb.currentData()
+        v1, v2 = 0, 0
+        pg = self._PSTACK.get(code, 0)
+        if pg == 1: v1 = self._pct_spin.value()
+        elif pg == 2: v1 = self._temp_spin.value()
+        elif pg == 3: v1 = self._cyc_spin.value()
+        elif pg == 4: v1 = self._hrs_spin.value()
+        elif pg == 5:
+            # Pack HH:MM into val1 as (hour<<8)|minute, seconds in val2
+            v1 = (self._hh.value() << 8) | self._mm.value()
+            v2 = self._ss.value()
+        return {'type': code, 'val1': v1, 'val2': v2}
+
+    def set_data(self, d: dict):
+        code = d.get('type', COND_DISABLED)
+        for i in range(self._type_cb.count()):
+            if self._type_cb.itemData(i) == code:
+                self._type_cb.setCurrentIndex(i)
+                break
+        v1, v2 = d.get('val1', 0), d.get('val2', 0)
+        pg = self._PSTACK.get(code, 0)
+        if pg == 1: self._pct_spin.setValue(v1)
+        elif pg == 2: self._temp_spin.setValue(v1)
+        elif pg == 3: self._cyc_spin.setValue(v1)
+        elif pg == 4: self._hrs_spin.setValue(v1)
+        elif pg == 5:
+            self._hh.setValue((v1 >> 8) & 0xFF)
+            self._mm.setValue(v1 & 0xFF)
+            self._ss.setValue(v2 & 0xFF)
+
+
+class _ActWidget(QWidget):
+    """Action type selector + context-aware parameter widgets."""
+    changed = pyqtSignal()
+
+    _PSTACK = {
+        ACT_NONE: 0, ACT_BLE_START: 0,
+        ACT_SET_POWER: 1, ACT_TX_PULSES: 2, ACT_TX_PAT: 3,
+        ACT_SET_CH: 4, ACT_SET_PERIOD: 5, ACT_LOG_MARK: 6,
+    }
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._build()
+
+    def _build(self):
+        h = QHBoxLayout(self)
+        h.setContentsMargins(0, 3, 0, 3)
+        h.setSpacing(8)
+
+        lbl = QLabel('→ Then:')
+        lbl.setStyleSheet('font-weight: bold;')
+        h.addWidget(lbl)
+
+        self._type_cb = QComboBox()
+        self._type_cb.setFixedWidth(200)
+        for code, lbl_t in ACT_LABELS:
+            self._type_cb.addItem(lbl_t, code)
+        h.addWidget(self._type_cb)
+
+        self._stack = QStackedWidget()
+        self._stack.setFixedHeight(30)
+
+        # Page 0: no params
+        self._stack.addWidget(QWidget())
+
+        # Page 1: TX power level
+        p1 = QWidget(); l1 = QHBoxLayout(p1); l1.setContentsMargins(0,0,0,0); l1.setSpacing(4)
+        l1.addWidget(QLabel('Level:'))
+        self._pwr_cb = QComboBox(); self._pwr_cb.setFixedWidth(100)
+        for i, n in [(1,'Low (1)'), (2,'Mid (2)'), (3,'High (3)'), (4,'Max (4)')]:
+            self._pwr_cb.addItem(n, i)
+        self._pwr_cb.currentIndexChanged.connect(self.changed)
+        l1.addWidget(self._pwr_cb); l1.addStretch()
+        self._stack.addWidget(p1)
+
+        # Page 2: TX pulses — count + gap
+        p2 = QWidget(); l2 = QHBoxLayout(p2); l2.setContentsMargins(0,0,0,0); l2.setSpacing(4)
+        l2.addWidget(QLabel('Count:'))
+        self._pcnt = QSpinBox(); self._pcnt.setRange(1, 255); self._pcnt.setFixedWidth(65)
+        self._pcnt.valueChanged.connect(self.changed)
+        l2.addWidget(self._pcnt)
+        l2.addSpacing(8); l2.addWidget(QLabel('Gap:'))
+        self._pgap = QSpinBox(); self._pgap.setRange(1, 9999); self._pgap.setSuffix(' ms')
+        self._pgap.setFixedWidth(90); self._pgap.valueChanged.connect(self.changed)
+        l2.addWidget(self._pgap); l2.addStretch()
+        self._stack.addWidget(p2)
+
+        # Page 3: TX pattern — ON ms / OFF ms
+        p3 = QWidget(); l3 = QHBoxLayout(p3); l3.setContentsMargins(0,0,0,0); l3.setSpacing(4)
+        l3.addWidget(QLabel('ON:'))
+        self._pon = QSpinBox(); self._pon.setRange(1, 9999); self._pon.setSuffix(' ms')
+        self._pon.setFixedWidth(90); self._pon.valueChanged.connect(self.changed)
+        l3.addWidget(self._pon)
+        l3.addSpacing(8); l3.addWidget(QLabel('OFF:'))
+        self._poff = QSpinBox(); self._poff.setRange(1, 9999); self._poff.setSuffix(' ms')
+        self._poff.setFixedWidth(90); self._poff.valueChanged.connect(self.changed)
+        l3.addWidget(self._poff); l3.addStretch()
+        self._stack.addWidget(p3)
+
+        # Page 4: channel selector CH0-CH3
+        p4 = QWidget(); l4 = QHBoxLayout(p4); l4.setContentsMargins(0,0,0,0); l4.setSpacing(4)
+        l4.addWidget(QLabel('Channel:'))
+        self._ch_cb = QComboBox(); self._ch_cb.setFixedWidth(80)
+        for i in range(4):
+            self._ch_cb.addItem(f'CH{i}', i)
+        self._ch_cb.currentIndexChanged.connect(self.changed)
+        l4.addWidget(self._ch_cb); l4.addStretch()
+        self._stack.addWidget(p4)
+
+        # Page 5: TX period (seconds)
+        p5 = QWidget(); l5 = QHBoxLayout(p5); l5.setContentsMargins(0,0,0,0); l5.setSpacing(4)
+        l5.addWidget(QLabel('Period:'))
+        self._per_s = QSpinBox(); self._per_s.setRange(1, 3600); self._per_s.setSuffix(' s')
+        self._per_s.setFixedWidth(90); self._per_s.valueChanged.connect(self.changed)
+        l5.addWidget(self._per_s); l5.addStretch()
+        self._stack.addWidget(p5)
+
+        # Page 6: log marker code
+        p6 = QWidget(); l6 = QHBoxLayout(p6); l6.setContentsMargins(0,0,0,0); l6.setSpacing(4)
+        l6.addWidget(QLabel('Marker code:'))
+        self._mark = QSpinBox(); self._mark.setRange(1, 255); self._mark.setFixedWidth(65)
+        self._mark.valueChanged.connect(self.changed)
+        l6.addWidget(self._mark); l6.addStretch()
+        self._stack.addWidget(p6)
+
+        h.addWidget(self._stack, 1)
+        self._type_cb.currentIndexChanged.connect(self._on_type)
+        self._on_type()
+
+    def _on_type(self):
+        code = self._type_cb.currentData()
+        self._stack.setCurrentIndex(self._PSTACK.get(code, 0))
+        self.changed.emit()
+
+    def get_data(self) -> dict:
+        code = self._type_cb.currentData()
+        p1, p2 = 0, 0
+        pg = self._PSTACK.get(code, 0)
+        if pg == 1: p1 = self._pwr_cb.currentData() or 1
+        elif pg == 2: p1 = self._pcnt.value(); p2 = self._pgap.value()
+        elif pg == 3: p1 = self._pon.value(); p2 = self._poff.value()
+        elif pg == 4: p1 = self._ch_cb.currentData() or 0
+        elif pg == 5: p1 = self._per_s.value()
+        elif pg == 6: p1 = self._mark.value()
+        return {'type': code, 'p1': p1, 'p2': p2}
+
+    def set_data(self, d: dict):
+        code = d.get('type', ACT_NONE)
+        for i in range(self._type_cb.count()):
+            if self._type_cb.itemData(i) == code:
+                self._type_cb.setCurrentIndex(i); break
+        p1, p2 = d.get('p1', 0), d.get('p2', 0)
+        pg = self._PSTACK.get(code, 0)
+        if pg == 1:
+            for i in range(self._pwr_cb.count()):
+                if self._pwr_cb.itemData(i) == p1: self._pwr_cb.setCurrentIndex(i); break
+        elif pg == 2: self._pcnt.setValue(p1); self._pgap.setValue(p2)
+        elif pg == 3: self._pon.setValue(p1); self._poff.setValue(p2)
+        elif pg == 4:
+            for i in range(self._ch_cb.count()):
+                if self._ch_cb.itemData(i) == p1: self._ch_cb.setCurrentIndex(i); break
+        elif pg == 5: self._per_s.setValue(p1)
+        elif pg == 6: self._mark.setValue(p1)
+
+
+class _EventCard(QFrame):
+    """Collapsible event card: up to MAX_CONDS conditions (AND) + one action."""
+    changed         = pyqtSignal()
+    remove_requested = pyqtSignal(object)
+
+    def __init__(self, index: int, parent=None):
+        super().__init__(parent)
+        self.setObjectName('card')
+        self._index = index
+        self._cond_rows: list = []
+        self._build()
+
+    def _build(self):
+        vbox = QVBoxLayout(self)
+        vbox.setContentsMargins(14, 10, 14, 10)
+        vbox.setSpacing(6)
+
+        # ── Title row ──────────────────────────────────────────────────────
+        tr = QHBoxLayout()
+        self._title_lbl = QLabel(f'Event {self._index + 1}')
+        self._title_lbl.setFont(QFont('Segoe UI', 10, QFont.Weight.Bold))
+        tr.addWidget(self._title_lbl)
+        tr.addSpacing(12)
+        self._en_chk  = QCheckBox('Enabled')
+        self._en_chk.stateChanged.connect(lambda _: self.changed.emit())
+        tr.addWidget(self._en_chk)
+        self._shot_chk = QCheckBox('One-shot')
+        self._shot_chk.setToolTip('Fire once then disable automatically')
+        self._shot_chk.stateChanged.connect(lambda _: self.changed.emit())
+        tr.addWidget(self._shot_chk)
+        tr.addStretch()
+        self._btn_rm = QPushButton('✕ Remove')
+        self._btn_rm.setObjectName('secondary')
+        self._btn_rm.setFixedWidth(88)
+        self._btn_rm.clicked.connect(lambda: self.remove_requested.emit(self))
+        tr.addWidget(self._btn_rm)
+        vbox.addLayout(tr)
+
+        vbox.addWidget(self._hr())
+
+        # ── Conditions section ─────────────────────────────────────────────
+        if_lbl = QLabel('IF  (all must be true):')
+        if_lbl.setStyleSheet('color: #888; font-size: 9pt; font-style: italic;')
+        vbox.addWidget(if_lbl)
+
+        self._conds_vbox = QVBoxLayout()
+        self._conds_vbox.setContentsMargins(0, 0, 0, 0)
+        self._conds_vbox.setSpacing(2)
+        vbox.addLayout(self._conds_vbox)
+
+        self._btn_add_cond = QPushButton('＋ Add condition')
+        self._btn_add_cond.setObjectName('secondary')
+        self._btn_add_cond.setFixedWidth(140)
+        self._btn_add_cond.clicked.connect(self._add_cond)
+        vbox.addWidget(self._btn_add_cond)
+
+        vbox.addWidget(self._hr())
+
+        # ── Action section ─────────────────────────────────────────────────
+        self._act = _ActWidget()
+        self._act.changed.connect(self.changed)
+        vbox.addWidget(self._act)
+
+        vbox.addWidget(self._hr())
+
+        # ── Cooldown row ───────────────────────────────────────────────────
+        cr = QHBoxLayout()
+        cr.addWidget(QLabel('Cooldown:'))
+        self._cool = QSpinBox()
+        self._cool.setRange(0, 255)
+        self._cool.setSuffix(' TX cycles')
+        self._cool.setFixedWidth(125)
+        self._cool.setToolTip('Minimum TX cycles between triggers  (0 = always)')
+        self._cool.valueChanged.connect(lambda _: self.changed.emit())
+        cr.addWidget(self._cool)
+        cr.addStretch()
+        vbox.addLayout(cr)
+
+        # Add the first condition
+        self._add_cond()
+
+    def _hr(self) -> QFrame:
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Sunken)
+        return line
+
+    def _add_cond(self):
+        if len(self._cond_rows) >= MAX_CONDS:
+            return
+        row = _CondRow()
+        row.removed.connect(self._remove_cond)
+        row.changed.connect(self.changed)
+        self._cond_rows.append(row)
+        self._conds_vbox.addWidget(row)
+        self._refresh_cond_buttons()
+        self.changed.emit()
+
+    def _remove_cond(self, row):
+        if len(self._cond_rows) <= 1:
+            return
+        self._cond_rows.remove(row)
+        row.setParent(None)
+        row.deleteLater()
+        self._refresh_cond_buttons()
+        self.changed.emit()
+
+    def _refresh_cond_buttons(self):
+        can_rm = len(self._cond_rows) > 1
+        for r in self._cond_rows:
+            r.set_removable(can_rm)
+        self._btn_add_cond.setVisible(len(self._cond_rows) < MAX_CONDS)
+
+    # public
+    def set_index(self, idx: int):
+        self._index = idx
+        self._title_lbl.setText(f'Event {idx + 1}')
+
+    def set_removable(self, v: bool):
+        self._btn_rm.setVisible(v)
+
+    def get_data(self) -> dict:
+        return {
+            'enabled':  self._en_chk.isChecked(),
+            'oneshot':  self._shot_chk.isChecked(),
+            'conds':    [r.get_data() for r in self._cond_rows],
+            'act':      self._act.get_data(),
+            'cooldown': self._cool.value(),
+        }
+
+    def set_data(self, d: dict):
+        self._en_chk.setChecked(d.get('enabled', False))
+        self._shot_chk.setChecked(d.get('oneshot', False))
+        self._cool.setValue(d.get('cooldown', 0))
+        self._act.set_data(d.get('act', {'type': ACT_NONE, 'p1': 0, 'p2': 0}))
+        conds = d.get('conds') or [{'type': COND_DISABLED, 'val1': 0, 'val2': 0}]
+        # Rebuild condition rows
+        for r in self._cond_rows:
+            r.setParent(None); r.deleteLater()
+        self._cond_rows.clear()
+        for c in conds[:MAX_CONDS]:
+            row = _CondRow()
+            row.removed.connect(self._remove_cond)
+            row.changed.connect(self.changed)
+            row.set_data(c)
+            self._cond_rows.append(row)
+            self._conds_vbox.addWidget(row)
+        self._refresh_cond_buttons()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Events tab
+# ─────────────────────────────────────────────────────────────────────────────
+class EventsTab(QWidget):
+    events_read_requested  = pyqtSignal()
+    events_write_requested = pyqtSignal(bytes)   # 112-byte blob
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._C = THEMES['light']
+        self._cards: list = []
+        self._build()
+
+    def _build(self):
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # ── Header bar ─────────────────────────────────────────────────────
+        bar = QFrame()
+        bl = QHBoxLayout(bar)
+        bl.setContentsMargins(14, 8, 14, 8)
+        bl.setSpacing(8)
+        title = QLabel(f'{ICO["events"]}  Events  —  IF / THEN rules')
+        title.setFont(QFont('Segoe UI', 10, QFont.Weight.Bold))
+        bl.addWidget(title)
+        bl.addSpacing(12)
+        note = QLabel(f'Max {MAX_EVENTS} events · up to {MAX_CONDS} conditions each (AND logic)')
+        note.setStyleSheet('color: #888; font-size: 9pt;')
+        bl.addWidget(note)
+        bl.addStretch()
+
+        self._btn_read = QPushButton('↓ Read')
+        self._btn_read.setObjectName('secondary')
+        self._btn_read.setEnabled(False)
+        self._btn_read.setToolTip('Read events from connected device')
+        self._btn_read.clicked.connect(self.events_read_requested)
+        bl.addWidget(self._btn_read)
+
+        self._btn_write = QPushButton('↑ Write')
+        self._btn_write.setObjectName('secondary')
+        self._btn_write.setEnabled(False)
+        self._btn_write.setToolTip('Write events to connected device')
+        self._btn_write.clicked.connect(self._do_write)
+        bl.addWidget(self._btn_write)
+
+        self._btn_clr_all = QPushButton('🗑 Clear all')
+        self._btn_clr_all.setObjectName('secondary')
+        self._btn_clr_all.clicked.connect(self._clear_all)
+        bl.addWidget(self._btn_clr_all)
+        outer.addWidget(bar)
+
+        # ── Scroll area ────────────────────────────────────────────────────
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        inner = QWidget()
+        self._root = QVBoxLayout(inner)
+        self._root.setContentsMargins(12, 12, 12, 12)
+        self._root.setSpacing(10)
+
+        self._cards_vbox = QVBoxLayout()
+        self._cards_vbox.setSpacing(10)
+        self._root.addLayout(self._cards_vbox)
+
+        self._btn_add = QPushButton('＋ Add Event')
+        self._btn_add.setObjectName('secondary')
+        self._btn_add.setFixedWidth(150)
+        self._btn_add.clicked.connect(self._add_event)
+        self._root.addWidget(self._btn_add)
+        self._root.addStretch()
+
+        scroll.setWidget(inner)
+        outer.addWidget(scroll, 1)
+
+        # Start with Event 1
+        self._add_event()
+
+    # ── Event management ───────────────────────────────────────────────────
+    def _add_event(self):
+        if len(self._cards) >= MAX_EVENTS:
+            return
+        card = _EventCard(len(self._cards))
+        card.changed.connect(lambda: None)   # no-op; write is explicit
+        card.remove_requested.connect(self._remove_event)
+        self._cards.append(card)
+        self._cards_vbox.addWidget(card)
+        self._btn_add.setVisible(len(self._cards) < MAX_EVENTS)
+        self._update_remove_btns()
+
+    def _remove_event(self, card):
+        if len(self._cards) <= 1:
+            return
+        self._cards.remove(card)
+        card.setParent(None)
+        card.deleteLater()
+        for i, c in enumerate(self._cards):
+            c.set_index(i)
+        self._btn_add.setVisible(True)
+        self._update_remove_btns()
+
+    def _update_remove_btns(self):
+        can_rm = len(self._cards) > 1
+        for c in self._cards:
+            c.set_removable(can_rm)
+
+    def _clear_all(self):
+        while len(self._cards) > 1:
+            c = self._cards.pop()
+            c.setParent(None); c.deleteLater()
+        if self._cards:
+            self._cards[0].set_index(0)
+        self._btn_add.setVisible(True)
+        self._update_remove_btns()
+
+    # ── Transport ──────────────────────────────────────────────────────────
+    def set_connected(self, v: bool):
+        self._btn_read.setEnabled(v)
+        self._btn_write.setEnabled(v)
+
+    def _do_write(self):
+        self.events_write_requested.emit(self.encode_blob())
+
+    # ── Wire format ────────────────────────────────────────────────────────
+    def encode_blob(self) -> bytes:
+        buf = bytearray(EVENTS_BLOB_SZ)
+        slots = [c.get_data() for c in self._cards]
+        empty = {'enabled': False, 'oneshot': False, 'cooldown': 0,
+                 'conds': [{'type': COND_DISABLED, 'val1': 0, 'val2': 0}],
+                 'act':   {'type': ACT_NONE, 'p1': 0, 'p2': 0}}
+        while len(slots) < MAX_EVENTS:
+            slots.append(empty)
+        for i, s in enumerate(slots[:MAX_EVENTS]):
+            self._pack_event(s, buf, i * EVENT_SIZE)
+        return bytes(buf)
+
+    def decode_blob(self, data: bytes):
+        if len(data) < EVENTS_BLOB_SZ:
+            return
+        parsed = [self._unpack_event(data, i * EVENT_SIZE) for i in range(MAX_EVENTS)]
+        # How many non-empty slots?
+        active = [p for p in parsed if p['conds'][0]['type'] != COND_DISABLED or p['enabled']]
+        n = max(1, len(active))
+        # Rebuild cards to match
+        while len(self._cards) > n:
+            c = self._cards.pop(); c.setParent(None); c.deleteLater()
+        while len(self._cards) < n:
+            self._add_event()
+        for card, slot in zip(self._cards, parsed[:n]):
+            card.set_data(slot)
+        self._btn_add.setVisible(len(self._cards) < MAX_EVENTS)
+        self._update_remove_btns()
+
+    @staticmethod
+    def _pack_event(d: dict, buf: bytearray, off: int):
+        flags = (EV_FLAG_ENABLED if d['enabled'] else 0) | (EV_FLAG_ONESHOT if d['oneshot'] else 0)
+        buf[off]   = flags
+        conds = (d.get('conds') or [])[:MAX_CONDS]
+        buf[off+1] = len(conds)
+        for i, c in enumerate(conds):
+            b = off + 2 + i * 5
+            buf[b] = c['type'] & 0xFF
+            struct.pack_into('<hh', buf, b+1, c.get('val1', 0), c.get('val2', 0))
+        act = d.get('act', {})
+        buf[off+17] = act.get('type', ACT_NONE) & 0xFF
+        struct.pack_into('<hh', buf, off+18, act.get('p1', 0), act.get('p2', 0))
+        buf[off+22] = d.get('cooldown', 0) & 0xFF
+
+    @staticmethod
+    def _unpack_event(data: bytes, off: int) -> dict:
+        flags   = data[off]
+        n_conds = min(max(data[off+1], 1), MAX_CONDS)
+        conds = []
+        for i in range(n_conds):
+            b = off + 2 + i * 5
+            v1, v2 = struct.unpack_from('<hh', data, b+1)
+            conds.append({'type': data[b], 'val1': v1, 'val2': v2})
+        act_type = data[off+17]
+        p1, p2 = struct.unpack_from('<hh', data, off+18)
+        return {
+            'enabled':  bool(flags & EV_FLAG_ENABLED),
+            'oneshot':  bool(flags & EV_FLAG_ONESHOT),
+            'conds':    conds,
+            'act':      {'type': act_type, 'p1': p1, 'p2': p2},
+            'cooldown': data[off+22],
+        }
+
+    def retheme(self, C: dict):
+        self._C = C
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # BLE Auto-Disconnect countdown dialog
 # ─────────────────────────────────────────────────────────────────────────────
 class AutoDiscCountdownDialog(QDialog):
@@ -6437,6 +7093,7 @@ class MainWindow(QMainWindow):
         self._tab_data      = DataTab()
         self._tab_settings  = SettingsTab()
         self._tab_ble       = BleTab()
+        self._tab_events    = EventsTab()
         self._tab_applog    = AppLogTab()
         self._tabs.addTab(self._tab_overview,  f'{ICO["tx"]} Overview')
         self._tabs.addTab(self._tab_beacon,    f'{ICO["schedule"]} Beacon')
@@ -6444,6 +7101,7 @@ class MainWindow(QMainWindow):
         self._tabs.addTab(self._tab_data,      f'{ICO["data"]} Data')
         self._tabs.addTab(self._tab_settings,  f'{ICO["settings"]} Settings')
         self._tabs.addTab(self._tab_ble,       f'{ICO["ble"]} BLE')
+        self._tabs.addTab(self._tab_events,    f'{ICO["events"]} Events')
         self._tabs.addTab(self._tab_applog,    f'{ICO["log"]} Log')
         self._tabs.currentChanged.connect(self._on_tab_changed)
 
@@ -6473,6 +7131,9 @@ class MainWindow(QMainWindow):
         # BLE tab signals
         self._tab_ble.ble_read_requested.connect(self._on_ble_read)
         self._tab_ble.ble_apply_requested.connect(self._on_ble_apply)
+        # Events tab signals
+        self._tab_events.events_read_requested.connect(self._on_events_read)
+        self._tab_events.events_write_requested.connect(self._on_events_write)
         # Persist spark and BLE auto-disconnect settings on change
         self._tab_overview._spark_combo.currentIndexChanged.connect(
             lambda _: self._save_settings())
@@ -6782,6 +7443,7 @@ class MainWindow(QMainWindow):
         C = self._C
         self._btn_refresh.setEnabled(connected)
         self._btn_sync_time.setEnabled(connected)
+        self._tab_events.set_connected(connected)
         self._btn_ble_scan.setEnabled(not connected)  # always allowed; shows install hint if bleak missing
         if connected:
             src = self._combo_src.currentText()
@@ -7905,6 +8567,54 @@ class MainWindow(QMainWindow):
         w.finished.connect(lambda: self._workers.remove(w) if w in self._workers else None)
         w.start()
 
+    def _on_events_read(self):
+        if not self._connected or not self._transport:
+            self._banner.show_err('Not connected')
+            return
+
+        def _do():
+            rc, data = self._transport.send_cmd(OP_EVT_GET, timeout=4.0)
+            return rc, data
+
+        def _done(res):
+            rc, data = res
+            if rc == 0 and len(data) >= EVENTS_BLOB_SZ:
+                self._tab_events.decode_blob(data[:EVENTS_BLOB_SZ])
+                self._banner.show_ok('Events read OK', 3000)
+                self._log(f'{ICO["ok"]} Events read from device ({EVENTS_BLOB_SZ} bytes)')
+            else:
+                self._banner.show_err(f'Events read failed (rc=0x{rc:02X}, got {len(data)} bytes)')
+
+        w = Worker(_do)
+        w.result.connect(_done)
+        w.error.connect(lambda e: self._banner.show_err(f'Events read error: {e}'))
+        self._workers.append(w)
+        w.finished.connect(lambda: self._workers.remove(w) if w in self._workers else None)
+        w.start()
+
+    def _on_events_write(self, blob: bytes):
+        if not self._connected or not self._transport:
+            self._banner.show_err('Not connected')
+            return
+
+        def _do():
+            rc, _ = self._transport.send_cmd(OP_EVT_SET, blob, timeout=4.0)
+            return rc
+
+        def _done(rc):
+            if rc == 0:
+                self._banner.show_ok('Events written to device', 3000)
+                self._log(f'{ICO["ok"]} Events written ({EVENTS_BLOB_SZ} bytes)')
+            else:
+                self._banner.show_err(f'Events write failed (rc=0x{rc:02X})')
+
+        w = Worker(_do)
+        w.result.connect(_done)
+        w.error.connect(lambda e: self._banner.show_err(f'Events write error: {e}'))
+        self._workers.append(w)
+        w.finished.connect(lambda: self._workers.remove(w) if w in self._workers else None)
+        w.start()
+
     def _toggle_theme(self):
         self._theme = 'dark' if self._theme == 'light' else 'light'
         self._C = THEMES[self._theme]
@@ -7921,6 +8631,7 @@ class MainWindow(QMainWindow):
         self._tab_data.retheme(C)
         self._tab_settings.retheme(C)
         self._tab_ble.retheme(C)
+        self._tab_events.retheme(C)
         self._tab_applog.retheme(C)
         self._banner.retheme(C)
         self._footer.retheme(C)
