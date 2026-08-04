@@ -25,7 +25,7 @@
 #include "flash_log.h"
 #include "cmd_layer.h"
 #include "svc_wake.h"
-#include "svc_events.h"
+/* #include "svc_events.h" */  /* EVENTS DISABLED */
 #include "lis2dw12.h"
 #include "app_ble.h"
 #include "ble_beacon_service.h"
@@ -78,6 +78,28 @@ static uint32_t _off_sleep_secs(void)
     if (s < 1U) s = 1U;
     return s;
 }
+
+/* EVENTS DISABLED
+static void _events_tick(void)
+{
+    static uint32_t s_cycle   = 0U;
+    static uint32_t s_prev_wk = 0U;
+    s_cycle++;
+    WakeStatus_t ws = {0};
+    SvcWake_GetStatus(&ws);
+    uint8_t motion  = (ws.trigger_count > s_prev_wk) ? 1U : 0U;
+    s_prev_wk       = ws.trigger_count;
+    EvSensors_t evs = {
+        .temp_01c  = (g_last_temp_x10 != INT32_MIN) ? (int16_t)g_last_temp_x10 : INT16_MIN,
+        .batt_pct  = (g_last_batt_pct >= 0)         ? (uint8_t)g_last_batt_pct  : 0U,
+        .motion    = motion,
+        .light_raw = (g_last_light_raw <= 4095U)     ? (uint16_t)g_last_light_raw : UINT16_MAX,
+        .rtc_unix  = Power_RTC_GetUnix(),
+        .cycle_num = s_cycle,
+    };
+    svc_events_process(&evs);
+}
+*/
 
 int main(void)
 {
@@ -155,7 +177,7 @@ int main(void)
 
     SvcWake_Init();
     CmdLayer_Init();
-    svc_events_init();
+    /* svc_events_init(); */  /* EVENTS DISABLED */
 
     /* Account for time spent in Shutdown between sessions (RTC-based) */
     if (from_shutdown) {
@@ -513,6 +535,7 @@ int main(void)
                     LED_Blink(5, 50, 50); HAL_Delay(1000);
                     GEKON_ClearPending(); UART_CheckIdle(); BLE_ForceShutdown(); Power_EnterShutdown();
                 }
+                /* if (s_gcnt == 0U) _events_tick(); */  /* EVENTS DISABLED */
                 continue;
             }
             /* ── Pulse: fixed ch/pwr, brief TX then sleep ──────────────── */
@@ -532,28 +555,6 @@ int main(void)
                     RF_Stop();
                     UART_Printf("[TX OFF] %lums  pause %lums...\r\n", g_tx_duration_ms, g_tx_period_ms);
 
-                    /* Evaluate event rules after each TX cycle */
-                    {
-                        static uint32_t s_tx_cycle_num = 0U;
-                        s_tx_cycle_num++;
-                        WakeStatus_t ws = {0};
-                        SvcWake_GetStatus(&ws);
-                        static uint32_t s_prev_wake_cnt = 0U;
-                        uint8_t motion = (ws.trigger_count > s_prev_wake_cnt) ? 1U : 0U;
-                        s_prev_wake_cnt = ws.trigger_count;
-                        EvSensors_t evs = {
-                            .temp_01c  = (g_last_temp_x10 != INT32_MIN)
-                                         ? (int16_t)g_last_temp_x10 : INT16_MIN,
-                            .batt_pct  = (g_last_batt_pct >= 0)
-                                         ? (uint8_t)g_last_batt_pct : 0U,
-                            .motion    = motion,
-                            .light_raw = (g_last_light_raw <= 4095U)
-                                         ? (uint16_t)g_last_light_raw : UINT16_MAX,
-                            .rtc_unix  = Power_RTC_GetUnix(),
-                            .cycle_num = s_tx_cycle_num,
-                        };
-                        svc_events_process(&evs);
-                    }
                 }
             }
             UART_CheckIdle();
@@ -590,6 +591,7 @@ int main(void)
                 UART_CheckIdle();
                 BLE_ForceShutdown(); Power_EnterShutdown();
             }
+            /* if (s_gcnt == 0U) _events_tick(); */  /* EVENTS DISABLED */
 
         } else if (g_tx_mode == TX_MODE_ECO) {
             /* ── Schedule gate ──────────────────────────────────────────── */
@@ -636,6 +638,7 @@ int main(void)
                     LED_Blink(5, 50, 50); HAL_Delay(1000);
                     GEKON_ClearPending(); UART_CheckIdle(); BLE_ForceShutdown(); Power_EnterShutdown();
                 }
+                /* if (s_gcnt == 0U) _events_tick(); */  /* EVENTS DISABLED */
                 continue;
             }
             /* ── Eco: MCU sleeps Stop1 during TX; GPIO holds RF state ─────
@@ -694,6 +697,7 @@ int main(void)
                 UART_CheckIdle();
                 BLE_ForceShutdown(); Power_EnterShutdown();
             }
+            /* if (s_gcnt == 0U) _events_tick(); */  /* EVENTS DISABLED */
 
         } else if (g_tx_mode == TX_MODE_CONT) {
             /* ── Cont: stays in this block while mode == CONT ──────────── *
@@ -807,6 +811,7 @@ int main(void)
                 UART_CheckIdle();
                 BLE_ForceShutdown(); Power_EnterShutdown();
             }
+            /* if (s_gcnt == 0U) _events_tick(); */  /* EVENTS DISABLED */
 
         } else {
             /* Unknown tx_mode: reset to PULSE to avoid silent misbehavior */

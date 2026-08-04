@@ -79,6 +79,7 @@ APP_SRCS += Core/Src/proto_uart.c
 APP_SRCS += Core/Src/lis2dw12.c
 APP_SRCS += Core/Src/svc_wake.c
 APP_SRCS += Core/Src/cmd_layer.c
+# APP_SRCS += Core/Src/svc_events.c  # EVENTS DISABLED
 APP_SRCS += Core/Src/syscalls.c
 
 # ── HAL driver sources ─────────────────────────────────────────────────────
