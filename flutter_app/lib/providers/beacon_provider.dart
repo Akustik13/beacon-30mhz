@@ -474,18 +474,29 @@ class BeaconProvider extends ChangeNotifier {
     if (index < 0 || index >= maxEvents) return false;
     events[index] = ev;
     notifyListeners();
-    if (_t == null) return true; // offline edit — will sync on next connect
+    if (_t == null) return true; // offline edit
+    return _pushAllEvents();
+  }
+
+  Future<bool> _pushAllEvents() async {
+    if (_t == null) return true;
     try {
-      final payload = Uint8List(1 + eventSize);
-      payload[0] = index & 0xFF;
-      payload.setRange(1, 1 + eventSize, ev.toBytes());
-      final res = await _t!.cmd(opEventSet, payload: payload);
+      final blob = eventsToBlob(events);
+      final res  = await _t!.cmd(opEventSet, payload: blob);
       return res.rc == cmdOk;
     } catch (_) { return false; }
   }
 
   Future<bool> clearEvent(int index) async {
-    return saveEvent(index, BeaconEvent());
+    if (index < 0 || index >= maxEvents) return false;
+    events[index] = BeaconEvent();
+    notifyListeners();
+    if (_t == null) return true;
+    try {
+      final res = await _t!.cmd(opEventClear,
+          payload: Uint8List.fromList([index & 0xFF]));
+      return res.rc == cmdOk;
+    } catch (_) { return false; }
   }
 
   Future<bool> clearAllEvents() async {

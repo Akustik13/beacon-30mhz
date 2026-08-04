@@ -25,6 +25,7 @@
 #include "flash_log.h"
 #include "cmd_layer.h"
 #include "svc_wake.h"
+#include "svc_events.h"
 #include "lis2dw12.h"
 #include "app_ble.h"
 #include "ble_beacon_service.h"
@@ -154,6 +155,7 @@ int main(void)
 
     SvcWake_Init();
     CmdLayer_Init();
+    svc_events_init();
 
     /* Account for time spent in Shutdown between sessions (RTC-based) */
     if (from_shutdown) {
@@ -529,6 +531,29 @@ int main(void)
                     HAL_Delay(g_tx_duration_ms);
                     RF_Stop();
                     UART_Printf("[TX OFF] %lums  pause %lums...\r\n", g_tx_duration_ms, g_tx_period_ms);
+
+                    /* Evaluate event rules after each TX cycle */
+                    {
+                        static uint32_t s_tx_cycle_num = 0U;
+                        s_tx_cycle_num++;
+                        WakeStatus_t ws = {0};
+                        SvcWake_GetStatus(&ws);
+                        static uint32_t s_prev_wake_cnt = 0U;
+                        uint8_t motion = (ws.trigger_count > s_prev_wake_cnt) ? 1U : 0U;
+                        s_prev_wake_cnt = ws.trigger_count;
+                        EvSensors_t evs = {
+                            .temp_01c  = (g_last_temp_x10 != INT32_MIN)
+                                         ? (int16_t)g_last_temp_x10 : INT16_MIN,
+                            .batt_pct  = (g_last_batt_pct >= 0)
+                                         ? (uint8_t)g_last_batt_pct : 0U,
+                            .motion    = motion,
+                            .light_raw = (g_last_light_raw <= 4095U)
+                                         ? (uint16_t)g_last_light_raw : UINT16_MAX,
+                            .rtc_unix  = Power_RTC_GetUnix(),
+                            .cycle_num = s_tx_cycle_num,
+                        };
+                        svc_events_process(&evs);
+                    }
                 }
             }
             UART_CheckIdle();

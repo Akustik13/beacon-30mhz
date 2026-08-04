@@ -5,6 +5,7 @@
 #include "flash_log.h"
 #include "hw_desc.h"
 #include "svc_uart_cmd.h"
+#include "svc_events.h"
 #include "svc_power.h"
 #include "svc_wake.h"
 #include "lis2dw12.h"
@@ -877,6 +878,30 @@ static uint8_t _op_ble_rssi(uint8_t *out, uint8_t *out_len)
     return CMD_OK;
 }
 
+/* 0x80  EVT_GET → events blob (EVT_BLOB_SIZE = 112 bytes) */
+static uint8_t _op_evt_get(uint8_t *out, uint8_t *out_len)
+{
+    svc_events_get_blob(out);
+    *out_len = (uint8_t)EVT_BLOB_SIZE;
+    return CMD_OK;
+}
+
+/* 0x81  EVT_SET  blob[112] → OK */
+static uint8_t _op_evt_set(const uint8_t *in, uint8_t in_len, uint8_t *out_len)
+{
+    *out_len = 0U;
+    if (in_len < (uint8_t)EVT_BLOB_SIZE) return CMD_ERR_LEN;
+    return svc_events_set_blob(in) ? CMD_OK : CMD_ERR_FLASH;
+}
+
+/* 0x82  EVT_CLR  idx(1): 0-3 or 0xFF=all → OK */
+static uint8_t _op_evt_clr(const uint8_t *in, uint8_t in_len, uint8_t *out_len)
+{
+    *out_len = 0U;
+    if (in_len < 1U) return CMD_ERR_LEN;
+    return svc_events_clear(in[0]) ? CMD_OK : CMD_ERR_PARAM;
+}
+
 /* 0x73  MEASURE_ALL → stat(24) accel_xyz(6, int16_le×3); force-reads all sensors */
 static uint8_t _op_measure_all(uint8_t *out, uint8_t *out_len)
 {
@@ -950,6 +975,10 @@ uint8_t CmdLayer_Dispatch(uint8_t opcode,
     case OP_BLE_SET:        res = _op_ble_set(in, in_len, out_len); break;
     case OP_BLE_RSSI:       res = _op_ble_rssi(out, out_len); break;
     case OP_MEASURE_ALL:    res = _op_measure_all(out, out_len); break;
+    /* Events */
+    case OP_EVT_GET:        res = _op_evt_get(out, out_len); break;
+    case OP_EVT_SET:        res = _op_evt_set(in, in_len, out_len); break;
+    case OP_EVT_CLR:        res = _op_evt_clr(in, in_len, out_len); break;
 
     default:
         *out_len = 0U;

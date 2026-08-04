@@ -689,12 +689,14 @@ COND_DISABLED   = 0x00; COND_BATT_BELOW  = 0x01; COND_BATT_ABOVE  = 0x02
 COND_TEMP_ABOVE = 0x03; COND_TEMP_BELOW  = 0x04; COND_NO_MOTION   = 0x05
 COND_MOTION     = 0x06; COND_LIGHT_BELOW = 0x07; COND_LIGHT_ABOVE = 0x08
 COND_EVERY_NCYC = 0x09; COND_ALWAYS      = 0x0A; COND_BEFORE_BLE  = 0x0B
-COND_EVERY_NHRS = 0x0C; COND_TIME_OF_DAY = 0x0D
+# COND_EVERY_NHRS: val1 = hours*60+minutes (total min), val2 = extra seconds
+COND_EVERY_NHRS = 0x0C
 
 # Action types
 ACT_NONE = 0x00; ACT_SET_POWER = 0x01; ACT_TX_PULSES = 0x02
 ACT_TX_PAT = 0x03; ACT_BLE_START = 0x04; ACT_SET_CH = 0x05
 ACT_SET_PERIOD = 0x06; ACT_LOG_MARK = 0x07
+ACT_LED_ON = 0x08; ACT_LED_OFF = 0x09; ACT_LED_BLINK = 0x0A
 
 COND_LABELS = [
     (COND_DISABLED,   'Disabled'),
@@ -705,14 +707,15 @@ COND_LABELS = [
     (COND_EVERY_NCYC, 'Every N TX cycles'),
     (COND_ALWAYS,     'Always (every cycle)'),
     (COND_BEFORE_BLE, 'Before BLE start'),
-    (COND_EVERY_NHRS, 'Every N hours'),
-    (COND_TIME_OF_DAY,'Time of day'),
+    (COND_EVERY_NHRS, 'Every H h M m S s'),
 ]
 ACT_LABELS = [
     (ACT_NONE,       'No action'),      (ACT_SET_POWER,  'Set TX power'),
     (ACT_TX_PULSES,  'Send N pulses'),  (ACT_TX_PAT,     'TX on/off pattern'),
     (ACT_BLE_START,  'Start BLE'),      (ACT_SET_CH,     'Set channel'),
     (ACT_SET_PERIOD, 'Set TX period'),  (ACT_LOG_MARK,   'Write log marker'),
+    (ACT_LED_ON,     'LED on'),         (ACT_LED_OFF,    'LED off'),
+    (ACT_LED_BLINK,  'LED blink'),
 ]
 
 # Nordic UART Service UUIDs — transparent UART protocol over BLE
@@ -6047,7 +6050,6 @@ class _CondRow(QWidget):
         COND_TEMP_ABOVE: 2, COND_TEMP_BELOW: 2,
         COND_NO_MOTION:  3, COND_EVERY_NCYC: 3,
         COND_EVERY_NHRS: 4,
-        COND_TIME_OF_DAY:5,
     }
 
     def __init__(self, parent=None):
@@ -6095,26 +6097,18 @@ class _CondRow(QWidget):
         l3.addWidget(self._cyc_spin); l3.addStretch()
         self._stack.addWidget(p3)
 
-        # Page 4: N hours
+        # Page 4: Every H h M m S s  (val1=hours*60+minutes, val2=seconds)
         p4 = QWidget(); l4 = QHBoxLayout(p4); l4.setContentsMargins(0,0,0,0); l4.setSpacing(4)
-        self._hrs_spin = QSpinBox(); self._hrs_spin.setRange(1, 168)
-        self._hrs_spin.setSuffix(' h'); self._hrs_spin.setFixedWidth(80)
-        self._hrs_spin.valueChanged.connect(self.changed)
-        l4.addWidget(self._hrs_spin); l4.addStretch()
+        self._nhrs_h = QSpinBox(); self._nhrs_h.setRange(0, 167); self._nhrs_h.setSuffix(' h')
+        self._nhrs_h.setFixedWidth(70); self._nhrs_h.valueChanged.connect(self.changed)
+        self._nhrs_m = QSpinBox(); self._nhrs_m.setRange(0, 59); self._nhrs_m.setSuffix(' m')
+        self._nhrs_m.setFixedWidth(66); self._nhrs_m.valueChanged.connect(self.changed)
+        self._nhrs_s = QSpinBox(); self._nhrs_s.setRange(0, 59); self._nhrs_s.setSuffix(' s')
+        self._nhrs_s.setFixedWidth(66); self._nhrs_s.valueChanged.connect(self.changed)
+        for w in (self._nhrs_h, self._nhrs_m, self._nhrs_s):
+            l4.addWidget(w)
+        l4.addStretch()
         self._stack.addWidget(p4)
-
-        # Page 5: time of day HH:MM:SS
-        p5 = QWidget(); l5 = QHBoxLayout(p5); l5.setContentsMargins(0,0,0,0); l5.setSpacing(3)
-        self._hh = QSpinBox(); self._hh.setRange(0, 23); self._hh.setSuffix('h')
-        self._hh.setFixedWidth(58); self._hh.valueChanged.connect(self.changed)
-        self._mm = QSpinBox(); self._mm.setRange(0, 59); self._mm.setSuffix('m')
-        self._mm.setFixedWidth(58); self._mm.valueChanged.connect(self.changed)
-        self._ss = QSpinBox(); self._ss.setRange(0, 59); self._ss.setSuffix('s')
-        self._ss.setFixedWidth(58); self._ss.valueChanged.connect(self.changed)
-        for w in (self._hh, QLabel(':'), self._mm, QLabel(':'), self._ss):
-            l5.addWidget(w)
-        l5.addStretch()
-        self._stack.addWidget(p5)
 
         h.addWidget(self._stack, 1)
 
@@ -6143,11 +6137,10 @@ class _CondRow(QWidget):
         if pg == 1: v1 = self._pct_spin.value()
         elif pg == 2: v1 = self._temp_spin.value()
         elif pg == 3: v1 = self._cyc_spin.value()
-        elif pg == 4: v1 = self._hrs_spin.value()
-        elif pg == 5:
-            # Pack HH:MM into val1 as (hour<<8)|minute, seconds in val2
-            v1 = (self._hh.value() << 8) | self._mm.value()
-            v2 = self._ss.value()
+        elif pg == 4:
+            # val1 = hours*60+minutes (total_minutes), val2 = seconds
+            v1 = self._nhrs_h.value() * 60 + self._nhrs_m.value()
+            v2 = self._nhrs_s.value()
         return {'type': code, 'val1': v1, 'val2': v2}
 
     def set_data(self, d: dict):
@@ -6161,11 +6154,11 @@ class _CondRow(QWidget):
         if pg == 1: self._pct_spin.setValue(v1)
         elif pg == 2: self._temp_spin.setValue(v1)
         elif pg == 3: self._cyc_spin.setValue(v1)
-        elif pg == 4: self._hrs_spin.setValue(v1)
-        elif pg == 5:
-            self._hh.setValue((v1 >> 8) & 0xFF)
-            self._mm.setValue(v1 & 0xFF)
-            self._ss.setValue(v2 & 0xFF)
+        elif pg == 4:
+            total_min = max(0, v1)
+            self._nhrs_h.setValue(total_min // 60)
+            self._nhrs_m.setValue(total_min % 60)
+            self._nhrs_s.setValue(max(0, v2))
 
 
 class _ActWidget(QWidget):
@@ -6173,9 +6166,10 @@ class _ActWidget(QWidget):
     changed = pyqtSignal()
 
     _PSTACK = {
-        ACT_NONE: 0, ACT_BLE_START: 0,
+        ACT_NONE: 0, ACT_BLE_START: 0, ACT_LED_ON: 0, ACT_LED_OFF: 0,
         ACT_SET_POWER: 1, ACT_TX_PULSES: 2, ACT_TX_PAT: 3,
         ACT_SET_CH: 4, ACT_SET_PERIOD: 5, ACT_LOG_MARK: 6,
+        ACT_LED_BLINK: 7,
     }
 
     def __init__(self, parent=None):
@@ -6263,6 +6257,19 @@ class _ActWidget(QWidget):
         l6.addWidget(self._mark); l6.addStretch()
         self._stack.addWidget(p6)
 
+        # Page 7: LED blink — count + period_ms
+        p7 = QWidget(); l7 = QHBoxLayout(p7); l7.setContentsMargins(0,0,0,0); l7.setSpacing(4)
+        l7.addWidget(QLabel('Count:'))
+        self._led_cnt = QSpinBox(); self._led_cnt.setRange(1, 20); self._led_cnt.setFixedWidth(55)
+        self._led_cnt.valueChanged.connect(self.changed)
+        l7.addWidget(self._led_cnt)
+        l7.addSpacing(8); l7.addWidget(QLabel('Period:'))
+        self._led_ms = QSpinBox(); self._led_ms.setRange(50, 5000); self._led_ms.setSuffix(' ms')
+        self._led_ms.setValue(200); self._led_ms.setFixedWidth(90)
+        self._led_ms.valueChanged.connect(self.changed)
+        l7.addWidget(self._led_ms); l7.addStretch()
+        self._stack.addWidget(p7)
+
         h.addWidget(self._stack, 1)
         self._type_cb.currentIndexChanged.connect(self._on_type)
         self._on_type()
@@ -6282,6 +6289,7 @@ class _ActWidget(QWidget):
         elif pg == 4: p1 = self._ch_cb.currentData() or 0
         elif pg == 5: p1 = self._per_s.value()
         elif pg == 6: p1 = self._mark.value()
+        elif pg == 7: p1 = self._led_cnt.value(); p2 = self._led_ms.value()
         return {'type': code, 'p1': p1, 'p2': p2}
 
     def set_data(self, d: dict):
@@ -6301,6 +6309,9 @@ class _ActWidget(QWidget):
                 if self._ch_cb.itemData(i) == p1: self._ch_cb.setCurrentIndex(i); break
         elif pg == 5: self._per_s.setValue(p1)
         elif pg == 6: self._mark.setValue(p1)
+        elif pg == 7:
+            self._led_cnt.setValue(max(1, p1))
+            self._led_ms.setValue(max(50, p2) if p2 > 0 else 200)
 
 
 class _EventCard(QFrame):

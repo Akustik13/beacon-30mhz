@@ -1,183 +1,247 @@
 import 'dart:typed_data';
 
-// ── Condition types ────────────────────────────────────────────────────────────
-const int condDisabled       = 0x00;
-const int condBatteryBelow   = 0x01;
-const int condBatteryAbove   = 0x02;
-const int condTempAbove      = 0x03;
-const int condTempBelow      = 0x04;
-const int condNoMotion       = 0x05;
-const int condMotion         = 0x06;
-const int condLightBelow     = 0x07;
-const int condLightAbove     = 0x08;
-const int condEveryNcycles   = 0x09;
-const int condAlways         = 0x0A;
-const int condBeforeBle      = 0x0B;
-const int condEveryNhours    = 0x0C;
+// ── Condition types ───────────────────────────────────────────────────────────
+const int condDisabled      = 0x00;
+const int condBattBelow     = 0x01;
+const int condBattAbove     = 0x02;
+const int condTempAbove     = 0x03;
+const int condTempBelow     = 0x04;
+const int condNoMotion      = 0x05;  // val1 = N cycles
+const int condMotion        = 0x06;
+const int condLightBelow    = 0x07;  // val1 = % 0-100
+const int condLightAbove    = 0x08;
+const int condEveryNcycles  = 0x09;  // val1 = N
+const int condAlways        = 0x0A;
+const int condBeforeBle     = 0x0B;
+const int condEveryNhrs     = 0x0C;  // val1=total_min (h×60+min), val2=extra_sec
 
-// ── Action types ───────────────────────────────────────────────────────────────
+// ── Action types ──────────────────────────────────────────────────────────────
 const int actNone       = 0x00;
-const int actSetPower   = 0x01;
-const int actTxPulses   = 0x02;
-const int actTxPattern  = 0x03;
+const int actSetPower   = 0x01;  // p1=0/1/2
+const int actTxPulses   = 0x02;  // p1=count p2=gap_ms
+const int actTxPattern  = 0x03;  // p1=on_ms p2=off_ms
 const int actBleStart   = 0x04;
-const int actSetChannel = 0x05;
-const int actSetPeriod  = 0x06;
-const int actLogMarker  = 0x07;
+const int actSetChannel = 0x05;  // p1=1/2/3
+const int actSetPeriod  = 0x06;  // p1=period_s
+const int actLogMarker  = 0x07;  // p1=tag
+const int actLedOn      = 0x08;
+const int actLedOff     = 0x09;
+const int actLedBlink   = 0x0A;  // p1=count p2=period_ms
 
-// ── Flags ─────────────────────────────────────────────────────────────────────
-const int evFlagOneShot    = 0x01;
-const int evFlagInvertCond = 0x02;
+// ── Event flags ───────────────────────────────────────────────────────────────
+const int evFlagEnabled = 0x01;
+const int evFlagOneShot = 0x02;
 
-const int maxEvents = 7;
-const int eventSize = 12; // bytes per event in wire format
+// ── Wire format constants ─────────────────────────────────────────────────────
+const int maxEvents  = 4;
+const int maxConds   = 3;
+const int condSize   = 5;   // cond_type(1) + val1(i16le) + val2(i16le)
+const int eventSize  = 28;  // firmware: 28 bytes per event
+const int eventBlob  = maxEvents * eventSize;  // 112 bytes
 
 // ── Human labels ──────────────────────────────────────────────────────────────
 const Map<int, String> condLabel = {
   condDisabled:     'Disabled',
-  condBatteryBelow: 'Battery below',
-  condBatteryAbove: 'Battery above',
-  condTempAbove:    'Temp above',
-  condTempBelow:    'Temp below',
-  condNoMotion:     'No motion for N cycles',
+  condBattBelow:    'Battery below %',
+  condBattAbove:    'Battery above %',
+  condTempAbove:    'Temp above °C',
+  condTempBelow:    'Temp below °C',
+  condNoMotion:     'No motion N cycles',
   condMotion:       'Motion detected',
-  condLightBelow:   'Light below',
-  condLightAbove:   'Light above',
+  condLightBelow:   'Light below %',
+  condLightAbove:   'Light above %',
   condEveryNcycles: 'Every N TX cycles',
   condAlways:       'Always (every cycle)',
   condBeforeBle:    'Before BLE start',
-  condEveryNhours:  'Every N hours (RTC)',
+  condEveryNhrs:    'Every H h M m S s',
 };
 
 const Map<int, String> actLabel = {
   actNone:       'No action',
   actSetPower:   'Set TX power',
-  actTxPulses:   'Send pulses',
-  actTxPattern:  'TX pattern (on/off)',
+  actTxPulses:   'Send extra pulses',
+  actTxPattern:  'TX on/off pattern',
   actBleStart:   'Start BLE advertising',
   actSetChannel: 'Set channel',
   actSetPeriod:  'Set TX period',
   actLogMarker:  'Write log marker',
+  actLedOn:      'LED on',
+  actLedOff:     'LED off',
+  actLedBlink:   'LED blink',
 };
 
-// Conditions that don't need a numeric value
-const Set<int> condNoValue = {condAlways, condBeforeBle, condMotion};
+// Conditions with no numeric val1 input needed
+const Set<int> condNoVal = {condAlways, condBeforeBle, condMotion};
 
-// ── Event model ───────────────────────────────────────────────────────────────
-class BeaconEvent {
-  bool   enabled;
-  int    condType;
-  int    condVal;   // signed 16-bit
-  int    actType;
-  int    cooldown;  // TX periods
-  int    actParam1; // signed 16-bit
-  int    actParam2; // signed 16-bit
-  int    flags;     // evFlagOneShot | evFlagInvertCond
-  // pad byte (ignored)
+// ── Single condition ──────────────────────────────────────────────────────────
+class EvCond {
+  int type;   // condXxx
+  int val1;   // signed 16-bit
+  int val2;   // signed 16-bit
 
-  BeaconEvent({
-    this.enabled   = false,
-    this.condType  = condDisabled,
-    this.condVal   = 0,
-    this.actType   = actNone,
-    this.cooldown  = 0,
-    this.actParam1 = 0,
-    this.actParam2 = 0,
-    this.flags     = 0,
-  });
+  EvCond({this.type = condDisabled, this.val1 = 0, this.val2 = 0});
 
-  bool get oneShot    => (flags & evFlagOneShot)    != 0;
-  bool get invertCond => (flags & evFlagInvertCond) != 0;
-  set oneShot(bool v)    => flags = v ? (flags | evFlagOneShot)    : (flags & ~evFlagOneShot);
-  set invertCond(bool v) => flags = v ? (flags | evFlagInvertCond) : (flags & ~evFlagInvertCond);
-
-  // ── Serialise / deserialise (12 bytes) ───────────────────────────────────────
   Uint8List toBytes() {
-    final b = ByteData(eventSize);
-    b.setUint8(0,  enabled ? 1 : 0);
-    b.setUint8(1,  condType & 0xFF);
-    b.setInt16(2,  condVal,   Endian.little);
-    b.setUint8(4,  actType & 0xFF);
-    b.setUint8(5,  cooldown & 0xFF);
-    b.setInt16(6,  actParam1, Endian.little);
-    b.setInt16(8,  actParam2, Endian.little);
-    b.setUint8(10, flags & 0xFF);
-    b.setUint8(11, 0); // pad
+    final b = ByteData(condSize);
+    b.setUint8(0,  type & 0xFF);
+    b.setInt16(1,  val1.clamp(-32768, 32767), Endian.little);
+    b.setInt16(3,  val2.clamp(-32768, 32767), Endian.little);
     return b.buffer.asUint8List();
   }
 
+  static EvCond fromBytes(Uint8List data, int offset) {
+    final b = ByteData.sublistView(data, offset, offset + condSize);
+    return EvCond(
+      type: b.getUint8(0),
+      val1: b.getInt16(1, Endian.little),
+      val2: b.getInt16(3, Endian.little),
+    );
+  }
+
+  EvCond copy() => EvCond(type: type, val1: val1, val2: val2);
+
+  bool get isEmpty => type == condDisabled;
+
+  String get summary {
+    switch (type) {
+      case condDisabled:     return '—';
+      case condAlways:       return 'Always';
+      case condBeforeBle:    return 'Before BLE';
+      case condMotion:       return 'Motion';
+      case condBattBelow:    return 'Batt < $val1%';
+      case condBattAbove:    return 'Batt > $val1%';
+      case condTempAbove:    return 'Temp > $val1°C';
+      case condTempBelow:    return 'Temp < $val1°C';
+      case condNoMotion:     return 'No motion $val1 cycles';
+      case condLightBelow:   return 'Light < $val1%';
+      case condLightAbove:   return 'Light > $val1%';
+      case condEveryNcycles: return 'Every $val1 cycles';
+      case condEveryNhrs:    return _timeSummary();
+      default:               return '?';
+    }
+  }
+
+  String _timeSummary() {
+    final h = val1 ~/ 60;
+    final m = val1 % 60;
+    final s = val2;
+    final parts = <String>[];
+    if (h > 0) parts.add('${h}h');
+    if (m > 0) parts.add('${m}m');
+    if (s > 0) parts.add('${s}s');
+    return 'Every ${parts.isEmpty ? '0s' : parts.join(' ')}';
+  }
+}
+
+// ── Full event (28 bytes) ─────────────────────────────────────────────────────
+class BeaconEvent {
+  bool        enabled;
+  bool        oneShot;
+  List<EvCond> conds;   // 1..maxConds active conditions (AND logic)
+  int          actType;
+  int          actP1;
+  int          actP2;
+  int          cooldown; // TX cycles skip after fire
+
+  BeaconEvent({
+    this.enabled   = false,
+    this.oneShot   = false,
+    List<EvCond>? conds,
+    this.actType   = actNone,
+    this.actP1     = 0,
+    this.actP2     = 0,
+    this.cooldown  = 0,
+  }) : conds = conds ?? [EvCond()];
+
+  // ── Serialise to 28 bytes ─────────────────────────────────────────────────
+  Uint8List toBytes() {
+    final b = Uint8List(eventSize);
+    final bv = ByteData.sublistView(b);
+
+    int flags = 0;
+    if (enabled) flags |= evFlagEnabled;
+    if (oneShot) flags |= evFlagOneShot;
+    bv.setUint8(0, flags);
+
+    final n = conds.length.clamp(0, maxConds);
+    bv.setUint8(1, n);
+
+    for (int i = 0; i < maxConds; i++) {
+      final cBytes = i < n ? conds[i].toBytes() : Uint8List(condSize);
+      b.setRange(2 + i * condSize, 2 + (i + 1) * condSize, cBytes);
+    }
+
+    bv.setUint8(17, actType & 0xFF);
+    bv.setInt16(18, actP1.clamp(-32768, 32767), Endian.little);
+    bv.setInt16(20, actP2.clamp(-32768, 32767), Endian.little);
+    bv.setUint8(22, cooldown & 0xFF);
+    // bytes 23-27 = pad (0, already zero from Uint8List)
+    return b;
+  }
+
   static BeaconEvent fromBytes(Uint8List data, [int offset = 0]) {
-    final b = ByteData.sublistView(data, offset, offset + eventSize);
+    final bv = ByteData.sublistView(data, offset, offset + eventSize);
+    final flags   = bv.getUint8(0);
+    final nConds  = bv.getUint8(1).clamp(0, maxConds);
+    final condList = <EvCond>[];
+    for (int i = 0; i < nConds; i++) {
+      condList.add(EvCond.fromBytes(data, offset + 2 + i * condSize));
+    }
+    if (condList.isEmpty) condList.add(EvCond());
     return BeaconEvent(
-      enabled:   b.getUint8(0) != 0,
-      condType:  b.getUint8(1),
-      condVal:   b.getInt16(2, Endian.little),
-      actType:   b.getUint8(4),
-      cooldown:  b.getUint8(5),
-      actParam1: b.getInt16(6, Endian.little),
-      actParam2: b.getInt16(8, Endian.little),
-      flags:     b.getUint8(10),
+      enabled:  (flags & evFlagEnabled) != 0,
+      oneShot:  (flags & evFlagOneShot)  != 0,
+      conds:    condList,
+      actType:  bv.getUint8(17),
+      actP1:    bv.getInt16(18, Endian.little),
+      actP2:    bv.getInt16(20, Endian.little),
+      cooldown: bv.getUint8(22),
     );
   }
 
   BeaconEvent copy() => BeaconEvent(
-    enabled:   enabled,
-    condType:  condType,
-    condVal:   condVal,
-    actType:   actType,
-    cooldown:  cooldown,
-    actParam1: actParam1,
-    actParam2: actParam2,
-    flags:     flags,
+    enabled:  enabled,
+    oneShot:  oneShot,
+    conds:    conds.map((c) => c.copy()).toList(),
+    actType:  actType,
+    actP1:    actP1,
+    actP2:    actP2,
+    cooldown: cooldown,
   );
 
-  // ── Human-readable summary ────────────────────────────────────────────────────
+  // ── Human summaries ───────────────────────────────────────────────────────
   String get condSummary {
-    final label = condLabel[condType] ?? '?';
-    if (condNoValue.contains(condType)) return label;
-    switch (condType) {
-      case condBatteryBelow:
-      case condBatteryAbove:  return '$label $condVal%';
-      case condTempAbove:
-      case condTempBelow:     return '$label $condVal°C';
-      case condNoMotion:      return '$label $condVal cycles';
-      case condLightBelow:
-      case condLightAbove:    return '$label $condVal%';
-      case condEveryNcycles:  return 'Every $condVal TX cycles';
-      case condEveryNhours:   return 'Every ${condVal}h (RTC)';
-      default:                return '$label $condVal';
-    }
+    final active = conds.where((c) => c.type != condDisabled).toList();
+    if (active.isEmpty) return '(no condition)';
+    return active.map((c) => c.summary).join(' AND ');
   }
 
   String get actSummary {
     switch (actType) {
       case actNone:       return 'No action';
-      case actSetPower:   return 'Power → ${_powerLabel(actParam1)}';
-      case actTxPulses:   return '$actParam1 pulse${actParam1 != 1 ? "s" : ""}, gap ${actParam2}ms';
-      case actTxPattern:  return 'TX on ${actParam1}ms / off ${actParam2}ms';
+      case actSetPower:   return 'Power → ${_pwrLabel(actP1)}';
+      case actTxPulses:   return '$actP1 pulse${actP1 != 1 ? "s" : ""}, gap ${actP2}ms';
+      case actTxPattern:  return 'TX on ${actP1}ms / off ${actP2}ms';
       case actBleStart:   return 'Start BLE';
-      case actSetChannel: return 'Channel → $actParam1';
-      case actSetPeriod:  return 'Period → ${actParam1}s';
-      case actLogMarker:  return 'Log marker #$actParam1';
+      case actSetChannel: return 'Channel → $actP1';
+      case actSetPeriod:  return 'Period → ${actP1}s';
+      case actLogMarker:  return 'Log marker #$actP1';
+      case actLedOn:      return 'LED on';
+      case actLedOff:     return 'LED off';
+      case actLedBlink:   return 'LED blink ×$actP1 ${actP2 > 0 ? "${actP2}ms" : "200ms"}';
       default:            return actLabel[actType] ?? '?';
     }
   }
 
-  static String _powerLabel(int v) {
-    switch (v) {
-      case 0: return '0 (Low)';
-      case 1: return '1 (Mid)';
-      case 2: return '2 (High)';
-      default: return v.toString();
-    }
-  }
+  static String _pwrLabel(int v) => ['Low(0)', 'Mid(1)', 'High(2)'].elementAtOrNull(v) ?? v.toString();
 
-  bool get isEmpty => !enabled && condType == condDisabled && actType == actNone;
+  bool get isEmpty => !enabled && actType == actNone &&
+      conds.every((c) => c.type == condDisabled);
 }
 
-// ── Wire blob: 7 × 12 = 84 bytes ─────────────────────────────────────────────
+// ── Wire blob helpers ─────────────────────────────────────────────────────────
 Uint8List eventsToBlob(List<BeaconEvent> events) {
-  final out = Uint8List(maxEvents * eventSize);
+  final out = Uint8List(eventBlob);
   for (int i = 0; i < maxEvents; i++) {
     final ev = i < events.length ? events[i] : BeaconEvent();
     out.setRange(i * eventSize, (i + 1) * eventSize, ev.toBytes());

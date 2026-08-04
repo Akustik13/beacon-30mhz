@@ -121,6 +121,11 @@
 #define OP_MEASURE_ALL       0x73U  /* — → stat(24) accel_xyz(6, int16×3); force-read all sensors */
 #define BLE_CMD_PAYLOAD_SIZE 22U    /* total payload bytes for BLE GET/SET */
 
+/* Events rule engine */
+#define OP_EVT_GET           0x80U  /* — → 112 bytes (4 events × 28 bytes)     */
+#define OP_EVT_SET           0x81U  /* 112 bytes → OK  (write all events)       */
+#define OP_EVT_CLR           0x82U  /* idx(1): 0-3 or 0xFF=all → OK            */
+
 /* ── Sensor IDs ───────────────────────────────────────────────────────────── */
 #define SENSOR_ID_TEMP   0U
 #define SENSOR_ID_BATT   1U
