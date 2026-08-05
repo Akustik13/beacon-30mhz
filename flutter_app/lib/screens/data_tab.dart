@@ -92,7 +92,7 @@ class _DataTabState extends State<DataTab> {
           // ── Log info row ──────────────────────────────────────────────
           if (beacon.logEntries.isNotEmpty || beacon.logTotal > 0)
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+              padding: const EdgeInsets.fromLTRB(16, 2, 16, 0),
               child: Row(children: [
                 Text('${beacon.logEntries.length} records downloaded',
                     style: Theme.of(context).textTheme.labelSmall),
@@ -100,6 +100,18 @@ class _DataTabState extends State<DataTab> {
                 Text('${beacon.logUsed} / ${beacon.logTotal} on device',
                     style: Theme.of(context).textTheme.labelSmall),
               ]),
+            ),
+          if (beacon.logEntries.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 2),
+              child: Text(
+                '${beacon.logTempCount} temp · '
+                '${beacon.logBatCount} batt · '
+                '${beacon.logLightCount} light · '
+                '${beacon.logAccelCount} accel',
+                style: Theme.of(context).textTheme.labelSmall
+                    ?.copyWith(color: Colors.grey),
+              ),
             ),
 
           const Divider(height: 12),
@@ -293,15 +305,20 @@ class _LineChartCard extends StatelessWidget {
     final lblC   = isDark ? Colors.white54 : Colors.black45;
 
     final spots = _toSpots(points);
-    final minX  = spots.first.x;
-    final maxX  = spots.last.x;
-    final spanX = (maxX - minX).clamp(1.0, double.infinity);
+    final dataMinX = spots.first.x;
+    final dataMaxX = spots.last.x;
+    final spanX  = (dataMaxX - dataMinX).clamp(1.0, double.infinity);
+    // 5% margin on each side so edge dots are not clipped by clipData
+    final edgeX  = spots.length == 1 ? spanX * 0.5 : spanX * 0.05;
+    final minX   = dataMinX - edgeX;
+    final maxX   = dataMaxX + edgeX;
 
     final yVals  = spots.map((s) => s.y).toList();
     final rawMin = yVals.reduce((a, b) => a < b ? a : b);
     final rawMax = yVals.reduce((a, b) => a > b ? a : b);
     final rawAvg = yVals.reduce((a, b) => a + b) / yVals.length;
-    final yPad   = ((rawMax - rawMin) * 0.12).clamp(0.5, 20.0);
+    // clamp upper bound raised: large-range values (e.g. battery mV) need more room
+    final yPad   = ((rawMax - rawMin) * 0.12).clamp(0.5, double.infinity);
     final yMin   = rawMin - yPad;
     final yMax   = rawMax + yPad;
     final yRange = (yMax - yMin).clamp(0.1, double.infinity);
@@ -428,9 +445,9 @@ class _LineChartCard extends StatelessWidget {
                 ),
               ),
               rightTitles: const AxisTitles(
-                  sideTitles: SideTitles(showTitles: false)),
+                  sideTitles: SideTitles(showTitles: false, reservedSize: 8)),
               topTitles: const AxisTitles(
-                  sideTitles: SideTitles(showTitles: false)),
+                  sideTitles: SideTitles(showTitles: false, reservedSize: 8)),
             ),
             lineBarsData: [
               LineChartBarData(
@@ -549,11 +566,15 @@ class _AccelChart extends StatelessWidget {
     final allPts = [
       ...beacon.logAccelXHistory, ...beacon.logAccelYHistory, ...beacon.logAccelZHistory,
     ];
-    final minX = allPts.map((p) => p.ts.millisecondsSinceEpoch / 1000.0).reduce((a, b) => a < b ? a : b);
-    final maxX = allPts.map((p) => p.ts.millisecondsSinceEpoch / 1000.0).reduce((a, b) => a > b ? a : b);
+    final dataMinX = allPts.map((p) => p.ts.millisecondsSinceEpoch / 1000.0).reduce((a, b) => a < b ? a : b);
+    final dataMaxX = allPts.map((p) => p.ts.millisecondsSinceEpoch / 1000.0).reduce((a, b) => a > b ? a : b);
+    final spanX  = (dataMaxX - dataMinX).clamp(1.0, double.infinity);
+    final edgeX  = allPts.length <= 3 ? spanX * 0.5 : spanX * 0.05;
+    final minX   = dataMinX - edgeX;
+    final maxX   = dataMaxX + edgeX;
     final rawYMin = allPts.map((p) => p.value).reduce((a, b) => a < b ? a : b);
     final rawYMax = allPts.map((p) => p.value).reduce((a, b) => a > b ? a : b);
-    final yPad = ((rawYMax - rawYMin) * 0.12).clamp(0.05, 1.0);
+    final yPad = ((rawYMax - rawYMin) * 0.12).clamp(0.05, double.infinity);
     final minY = rawYMin - yPad;
     final maxY = rawYMax + yPad;
 
@@ -610,9 +631,9 @@ class _AccelChart extends StatelessWidget {
                 );
               },
             )),
-            bottomTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-            rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-            topTitles:   const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            bottomTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false, reservedSize: 8)),
+            rightTitles:  const AxisTitles(sideTitles: SideTitles(showTitles: false, reservedSize: 8)),
+            topTitles:    const AxisTitles(sideTitles: SideTitles(showTitles: false, reservedSize: 8)),
           ),
           lineBarsData: [
             if (beacon.logAccelXHistory.isNotEmpty)

@@ -57,6 +57,12 @@ class BeaconProvider extends ChangeNotifier {
   bool isDownloadingLog  = false;
   double downloadProgress = 0.0;
 
+  // Per-type point counts derived from log chart histories
+  int get logTempCount  => logTempHistory.length;
+  int get logBatCount   => logBatHistory.length;
+  int get logLightCount => logLightHistory.length;
+  int get logAccelCount => logAccelXHistory.length;
+
   // ── RTC time ─────────────────────────────────────────────────────────────
   int?      beaconTimeS;         // unix timestamp from beacon RTC
   DateTime? _beaconTimeReadAt;   // wall clock when beaconTimeS was last set
@@ -359,14 +365,26 @@ class BeaconProvider extends ChangeNotifier {
 
       const batchSize = 32;
       int offset = 0;
+      int emptyStreak = 0;
       final entries = <Map<String, dynamic>>[];
 
       while (offset < logUsed) {
-        final count = (logUsed - offset).clamp(0, batchSize);
+        final count = (logUsed - offset).clamp(1, batchSize);
         final raw = await _t!.cmdLogRead(offset, count);
-        if (raw.isEmpty) break;
+        if (raw.isEmpty) {
+          // Retry up to 3 times before giving up. Handles two cases:
+          // • BLE hiccup (transient drop) — retrying usually recovers.
+          // • Circular-buffer write-page gap — the firmware returns CMD_OK with
+          //   0 bytes for the erased erase-ahead page; 3 retries confirm it's
+          //   genuinely empty (not just a lost packet) then we stop normally.
+          if (++emptyStreak > 2) break;
+          continue;
+        }
+        emptyStreak = 0;
 
         final recs = raw.length ~/ recSize;
+        if (recs == 0) break;  // malformed: non-empty payload but shorter than 1 record
+
         for (int i = 0; i < recs; i++) {
           final slice = Uint8List.fromList(raw.sublist(i * recSize, (i + 1) * recSize));
           if (slice.length < 16) continue;

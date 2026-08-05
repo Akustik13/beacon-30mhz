@@ -95,28 +95,35 @@ class _EventsTabState extends State<EventsTab> {
           ),
         ),
         Expanded(
-          child: ListView.builder(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            itemCount: maxEvents,
-            itemBuilder: (_, i) => _EventCard(
-              key: ValueKey(i),
-              index: i,
-              event: beacon.events[i],
-            ),
+          child: ListView(
+            padding: const EdgeInsets.only(top: 8, bottom: 8),
+            children: [
+              // ── 4 event cards ─────────────────────────────────────────
+              for (int i = 0; i < maxEvents; i++)
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: _EventCard(
+                    key: ValueKey(i),
+                    index: i,
+                    event: beacon.events[i],
+                  ),
+                ),
+              // ── Wake-on-Motion (accelerometer) ────────────────────────
+              const _WomSection(),
+              // ── Markers panel ─────────────────────────────────────────
+              _MarkersPanel(
+                markers: markers,
+                expanded: showMarkers,
+                loading: beacon.isDownloadingLog,
+                connected: connected,
+                onToggle: () => setState(() => _markersExpanded = !showMarkers),
+                onLoad: beacon.downloadLog,
+                downloadProgress: beacon.downloadProgress,
+                downloadTotal: beacon.logTotal,
+              ),
+              SizedBox(height: MediaQuery.of(context).padding.bottom + 12),
+            ],
           ),
-        ),
-        // ── Wake-on-Motion ──────────────────────────────────────────────
-        const _WomSection(),
-        // ── Markers panel ───────────────────────────────────────────────
-        _MarkersPanel(
-          markers: markers,
-          expanded: showMarkers,
-          loading: beacon.isDownloadingLog,
-          connected: connected,
-          onToggle: () => setState(() => _markersExpanded = !showMarkers),
-          onLoad: beacon.downloadLog,
-          downloadProgress: beacon.downloadProgress,
-          downloadTotal: beacon.logTotal,
         ),
       ]),
     );
@@ -964,13 +971,12 @@ class _MarkersPanel extends StatelessWidget {
                       style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
                     ),
                   )
-                : ConstrainedBox(
-                    constraints: const BoxConstraints(maxHeight: 200),
-                    child: ListView.builder(
-                      shrinkWrap: true,
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                      itemCount: markers.length,
-                      itemBuilder: (_, i) {
+                : ListView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                    itemCount: markers.length,
+                    itemBuilder: (_, i) {
                         final r = markers[i];
                         return Padding(
                           padding: const EdgeInsets.symmetric(vertical: 3),
@@ -1004,7 +1010,6 @@ class _MarkersPanel extends StatelessWidget {
                         );
                       },
                     ),
-                  ),
         ],
       ),
     );
