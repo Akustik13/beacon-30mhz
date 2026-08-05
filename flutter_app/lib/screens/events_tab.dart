@@ -4,35 +4,30 @@ import 'package:provider/provider.dart';
 import '../providers/ble_provider.dart';
 import '../providers/beacon_provider.dart';
 import '../protocol/event_model.dart';
+import '../protocol/opcodes.dart';
 
 // ── Events list tab ───────────────────────────────────────────────────────────
 
-class EventsTab extends StatelessWidget {
+class EventsTab extends StatefulWidget {
   const EventsTab({super.key});
+  @override
+  State<EventsTab> createState() => _EventsTabState();
+}
+
+class _EventsTabState extends State<EventsTab> {
+  bool? _markersExpanded; // null = auto: expand when markers exist
 
   @override
   Widget build(BuildContext context) {
     final ble       = context.watch<BleProvider>();
     final beacon    = context.watch<BeaconProvider>();
     final connected = ble.isConnected;
+    final markers   = beacon.logEntries.where((r) => r.containsKey('marker')).toList();
+    final showMarkers = _markersExpanded ?? markers.isNotEmpty;
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Events'),
-        actions: [
-          if (connected)
-            IconButton(
-              icon: const Icon(Icons.refresh),
-              tooltip: 'Reload from device',
-              onPressed: beacon.loadEvents,
-            ),
-          if (connected)
-            IconButton(
-              icon: const Icon(Icons.delete_sweep_outlined),
-              tooltip: 'Clear all events',
-              onPressed: () => _confirmClearAll(context, beacon),
-            ),
-        ],
       ),
       body: Column(children: [
         if (!connected)
@@ -49,6 +44,56 @@ class EventsTab extends StatelessWidget {
                   style: Theme.of(context).textTheme.bodySmall),
             ]),
           ),
+        // ── Action toolbar ─────────────────────────────────────────────
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            children: [
+              OutlinedButton.icon(
+                onPressed: connected ? () { HapticFeedback.lightImpact(); beacon.loadEvents(); } : null,
+                icon: const Icon(Icons.refresh, size: 15),
+                label: const Text('Read', style: TextStyle(fontSize: 13)),
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size(0, 34),
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ),
+              OutlinedButton.icon(
+                onPressed: (connected && !beacon.isDownloadingLog)
+                    ? () { HapticFeedback.lightImpact(); beacon.downloadLog(); }
+                    : null,
+                icon: const Icon(Icons.download, size: 15),
+                label: Text(
+                  beacon.isDownloadingLog
+                      ? 'Loading… ${(beacon.downloadProgress * 100).round()}%'
+                      : 'Load Markers',
+                  style: const TextStyle(fontSize: 13),
+                ),
+                style: OutlinedButton.styleFrom(
+                  minimumSize: const Size(0, 34),
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ),
+              OutlinedButton.icon(
+                onPressed: connected
+                    ? () { HapticFeedback.lightImpact(); _confirmClearAll(context, beacon); }
+                    : null,
+                icon: const Icon(Icons.delete_sweep_outlined, size: 15),
+                label: const Text('Clear All', style: TextStyle(fontSize: 13)),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.red,
+                  minimumSize: const Size(0, 34),
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ),
+            ],
+          ),
+        ),
         Expanded(
           child: ListView.builder(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -59,6 +104,19 @@ class EventsTab extends StatelessWidget {
               event: beacon.events[i],
             ),
           ),
+        ),
+        // ── Wake-on-Motion ──────────────────────────────────────────────
+        const _WomSection(),
+        // ── Markers panel ───────────────────────────────────────────────
+        _MarkersPanel(
+          markers: markers,
+          expanded: showMarkers,
+          loading: beacon.isDownloadingLog,
+          connected: connected,
+          onToggle: () => setState(() => _markersExpanded = !showMarkers),
+          onLoad: beacon.downloadLog,
+          downloadProgress: beacon.downloadProgress,
+          downloadTotal: beacon.logTotal,
         ),
       ]),
     );
@@ -169,12 +227,35 @@ class _EventEditorPage extends StatefulWidget {
 
 class _EventEditorPageState extends State<_EventEditorPage> {
   late BeaconEvent _ev;
+  late TextEditingController _cooldownCtrl;
 
   @override
   void initState() {
     super.initState();
     _ev = widget.initial.copy();
     if (_ev.conds.isEmpty) _ev.conds.add(EvCond());
+    _cooldownCtrl = TextEditingController(text: _ev.cooldown.toString());
+  }
+
+  @override
+  void dispose() {
+    _cooldownCtrl.dispose();
+    super.dispose();
+  }
+
+  Widget _numField({required String label, required String hint, required int value, required void Function(int) onChanged}) {
+    return TextField(
+      controller: _cooldownCtrl,
+      keyboardType: TextInputType.number,
+      decoration: InputDecoration(
+        labelText: label,
+        hintText: hint,
+        border: const OutlineInputBorder(),
+        isDense: true,
+        contentPadding: const EdgeInsets.fromLTRB(12, 16, 12, 16),
+      ),
+      onChanged: (s) { final v = int.tryParse(s); if (v != null) onChanged(v); },
+    );
   }
 
   void _save()  => Navigator.pop(context, _EditorResult(event: _ev));
@@ -218,6 +299,7 @@ class _EventEditorPageState extends State<_EventEditorPage> {
               onPressed: () { HapticFeedback.lightImpact(); _save(); },
               icon: const Icon(Icons.check, size: 18),
               label: const Text('Save'),
+              style: FilledButton.styleFrom(minimumSize: const Size(0, 48)),
             ),
           ]),
         ),
@@ -268,8 +350,8 @@ class _EventEditorPageState extends State<_EventEditorPage> {
           _SectionLabel('Options'),
           const SizedBox(height: 8),
           _numField(
-            label: 'Cooldown (TX cycles)',
-            hint:  '0 = fire every cycle',
+            label: 'Cooldown (s)',
+            hint:  '0 = every wake',
             value: _ev.cooldown,
             onChanged: (v) => setState(() => _ev.cooldown = v),
           ),
@@ -390,20 +472,20 @@ class _CondRowState extends State<_CondRow> {
         return _intField(_v1Ctrl, 'Temperature (°C)', '36', _setV1, signed: true);
 
       case condNoMotion:
-        return _intField(_v1Ctrl, 'Consecutive no-motion cycles', '10', _setV1);
+        return _intField(_v1Ctrl, 'No-motion cycles', '10', _setV1);
 
       case condLightBelow:
       case condLightAbove:
         return _intField(_v1Ctrl, 'Light level (%)', '50', _setV1);
 
       case condEveryNcycles:
-        return _intField(_v1Ctrl, 'N (TX cycles)', '10', _setV1);
+        return _intField(_v1Ctrl, 'N (wake cycles)', '10', _setV1);
 
       case condEveryNhrs:
         return Row(children: [
-          Expanded(child: _intField(_v1Ctrl, 'Hours × 60 + Min', '60', _setV1)),
+          Expanded(child: _intField(_v1Ctrl, 'Minutes', '60', _setV1)),
           const SizedBox(width: 8),
-          Expanded(child: _intField(_v2Ctrl, 'Extra seconds', '0', _setV2)),
+          Expanded(child: _intField(_v2Ctrl, 'Extra sec', '0', _setV2)),
         ]);
 
       default:
@@ -419,6 +501,7 @@ class _CondRowState extends State<_CondRow> {
         labelText: label, hintText: hint,
         border: const OutlineInputBorder(),
         isDense: true,
+        contentPadding: const EdgeInsets.fromLTRB(12, 18, 12, 10),
       ),
       keyboardType: TextInputType.numberWithOptions(signed: signed),
       inputFormatters: [FilteringTextInputFormatter.allow(
@@ -546,6 +629,7 @@ class _ActionWidgetState extends State<_ActionWidget> {
         labelText: label, hintText: hint,
         border: const OutlineInputBorder(),
         isDense: true,
+        contentPadding: const EdgeInsets.fromLTRB(12, 18, 12, 10),
       ),
       keyboardType: TextInputType.number,
       inputFormatters: [FilteringTextInputFormatter.digitsOnly],
@@ -557,7 +641,7 @@ class _ActionWidgetState extends State<_ActionWidget> {
 // ── Shared popup dropdown ─────────────────────────────────────────────────────
 
 Widget _popup<T>({
-  required String labelText,
+  required String label,
   required T value,
   required Map<T, String> options,
   required void Function(T) onChanged,
@@ -572,7 +656,7 @@ Widget _popup<T>({
         .toList(),
     child: InputDecorator(
       decoration: InputDecoration(
-        labelText: labelText,
+        labelText: label,
         border: const OutlineInputBorder(),
         contentPadding: const EdgeInsets.fromLTRB(12, 16, 8, 16),
         isDense: true,
@@ -589,6 +673,168 @@ Widget _popup<T>({
 
 // ── Section label ─────────────────────────────────────────────────────────────
 
+// ── Wake-on-Motion section ────────────────────────────────────────────────────
+
+class _WomSection extends StatefulWidget {
+  const _WomSection();
+  @override
+  State<_WomSection> createState() => _WomSectionState();
+}
+
+class _WomSectionState extends State<_WomSection> {
+  bool _expanded   = false;
+  bool _enable     = false;
+  int  _threshMg   = 200;
+  int  _durMs      = 500;
+  int  _action     = wakeActionWakeMcu;
+  String _status   = '';
+
+  Future<void> _load() async {
+    final w = context.read<BeaconProvider>().wakeCfg;
+    if (w == null) return;
+    setState(() {
+      _enable   = (w['enable'] as int) != 0;
+      _threshMg = w['threshold_mg'] as int;
+      _durMs    = w['duration_ms']  as int;
+      _action   = w['action']       as int;
+    });
+  }
+
+  Future<void> _save() async {
+    final ok = await context.read<BeaconProvider>().writeWakeCfg({
+      'enable': _enable ? 1 : 0,
+      'threshold_mg': _threshMg,
+      'duration_ms': _durMs,
+      'action': _action,
+    });
+    if (mounted) setState(() => _status = ok ? '✓ Saved' : '✗ Failed');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final connected = context.watch<BleProvider>().isConnected;
+    final cs = Theme.of(context).colorScheme;
+
+    return Container(
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: cs.outlineVariant)),
+      ),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        InkWell(
+          onTap: () {
+            setState(() => _expanded = !_expanded);
+            if (_expanded) _load();
+          },
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            child: Row(children: [
+              const Icon(Icons.motion_photos_on_outlined, size: 16),
+              const SizedBox(width: 8),
+              const Text('Wake-on-Motion',
+                  style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+              if (_enable) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: Colors.green.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Text('Armed',
+                      style: TextStyle(fontSize: 11, color: Colors.green,
+                          fontWeight: FontWeight.w600)),
+                ),
+              ],
+              const Spacer(),
+              Icon(_expanded ? Icons.expand_less : Icons.expand_more,
+                  size: 18, color: cs.onSurfaceVariant),
+            ]),
+          ),
+        ),
+        if (_expanded)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('⚠  Sensor must stay powered while WoM is armed.',
+                  style: TextStyle(fontSize: 11, color: Colors.orange.shade800)),
+              const SizedBox(height: 8),
+              SwitchListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Enable', style: TextStyle(fontSize: 13)),
+                value: _enable,
+                onChanged: (v) => setState(() => _enable = v),
+              ),
+              Row(children: [
+                const Text('Threshold:', style: TextStyle(fontSize: 13)),
+                const SizedBox(width: 8),
+                Expanded(child: Slider(
+                  value: _threshMg.toDouble().clamp(10, 2000),
+                  min: 10, max: 2000, divisions: 199,
+                  label: '$_threshMg mg',
+                  onChanged: (v) => setState(() => _threshMg = v.round()),
+                )),
+                SizedBox(width: 52,
+                    child: Text('$_threshMg mg',
+                        style: const TextStyle(fontSize: 12), textAlign: TextAlign.end)),
+              ]),
+              Row(children: [
+                const Text('Duration:', style: TextStyle(fontSize: 13)),
+                const SizedBox(width: 8),
+                Expanded(child: Slider(
+                  value: _durMs.toDouble().clamp(50, 5000),
+                  min: 50, max: 5000, divisions: 99,
+                  label: '$_durMs ms',
+                  onChanged: (v) => setState(() => _durMs = v.round()),
+                )),
+                SizedBox(width: 52,
+                    child: Text('$_durMs ms',
+                        style: const TextStyle(fontSize: 12), textAlign: TextAlign.end)),
+              ]),
+              const SizedBox(height: 4),
+              const Text('Action:', style: TextStyle(fontSize: 13)),
+              CheckboxListTile(
+                dense: true, contentPadding: EdgeInsets.zero,
+                title: const Text('Wake MCU', style: TextStyle(fontSize: 13)),
+                value: (_action & wakeActionWakeMcu) != 0,
+                onChanged: (v) => setState(() =>
+                    _action = v! ? _action | wakeActionWakeMcu : _action & ~wakeActionWakeMcu),
+              ),
+              CheckboxListTile(
+                dense: true, contentPadding: EdgeInsets.zero,
+                title: const Text('TX burst', style: TextStyle(fontSize: 13)),
+                value: (_action & wakeActionTxBurst) != 0,
+                onChanged: (v) => setState(() =>
+                    _action = v! ? _action | wakeActionTxBurst : _action & ~wakeActionTxBurst),
+              ),
+              CheckboxListTile(
+                dense: true, contentPadding: EdgeInsets.zero,
+                title: const Text('Log marker', style: TextStyle(fontSize: 13)),
+                value: (_action & wakeActionLogMarker) != 0,
+                onChanged: (v) => setState(() =>
+                    _action = v! ? _action | wakeActionLogMarker : _action & ~wakeActionLogMarker),
+              ),
+              const SizedBox(height: 8),
+              Row(children: [
+                FilledButton(
+                  onPressed: connected ? _save : null,
+                  style: FilledButton.styleFrom(minimumSize: const Size(0, 40)),
+                  child: const Text('Apply'),
+                ),
+                const SizedBox(width: 12),
+                if (_status.isNotEmpty)
+                  Text(_status,
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: _status.startsWith('✓') ? Colors.green : Colors.red)),
+              ]),
+            ]),
+          ),
+      ]),
+    );
+  }
+}
+
 class _SectionLabel extends StatelessWidget {
   final String text;
   const _SectionLabel(this.text);
@@ -600,4 +846,167 @@ class _SectionLabel extends StatelessWidget {
       color: Theme.of(context).colorScheme.primary,
     ),
   );
+}
+
+// ── Markers panel ─────────────────────────────────────────────────────────────
+
+class _MarkersPanel extends StatelessWidget {
+  final List<Map<String, dynamic>> markers;
+  final bool expanded;
+  final bool loading;
+  final bool connected;
+  final VoidCallback onToggle;
+  final VoidCallback onLoad;
+  final double downloadProgress;
+  final int downloadTotal;
+
+  const _MarkersPanel({
+    required this.markers,
+    required this.expanded,
+    required this.loading,
+    required this.connected,
+    required this.onToggle,
+    required this.onLoad,
+    required this.downloadProgress,
+    required this.downloadTotal,
+  });
+
+  String _fmtTime(int ts) {
+    if (ts == 0) return '—';
+    try {
+      final dt = DateTime.fromMillisecondsSinceEpoch(ts * 1000).toLocal();
+      return '${dt.year}-${dt.month.toString().padLeft(2,'0')}-${dt.day.toString().padLeft(2,'0')}'
+             ' ${dt.hour.toString().padLeft(2,'0')}:${dt.minute.toString().padLeft(2,'0')}:${dt.second.toString().padLeft(2,'0')}';
+    } catch (_) { return ts.toString(); }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final markerColor = const Color(0xFFE67E00);
+
+    return Container(
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: cs.outlineVariant)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // ── Header row ───────────────────────────────────────────────
+          InkWell(
+            onTap: onToggle,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              child: Row(children: [
+                Icon(Icons.bookmark_outline, size: 16, color: markerColor),
+                const SizedBox(width: 8),
+                Text(
+                  markers.isEmpty ? 'Log Markers' : 'Log Markers  (${markers.length})',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                    color: markers.isEmpty ? cs.onSurfaceVariant : markerColor,
+                  ),
+                ),
+                const Spacer(),
+                if (loading) ...[
+                  SizedBox(
+                    width: 120,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          downloadTotal > 0
+                              ? '${(downloadProgress * downloadTotal).round()}/$downloadTotal'
+                              : 'Loading…',
+                          style: TextStyle(fontSize: 11, color: cs.onSurfaceVariant),
+                        ),
+                        const SizedBox(height: 3),
+                        LinearProgressIndicator(
+                          value: downloadProgress > 0 ? downloadProgress : null,
+                          minHeight: 3,
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                ] else if (connected) ...[
+                  TextButton.icon(
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    onPressed: onLoad,
+                    icon: const Icon(Icons.download, size: 15),
+                    label: const Text('Load', style: TextStyle(fontSize: 12)),
+                  ),
+                  const SizedBox(width: 4),
+                ],
+                Icon(
+                  expanded ? Icons.expand_less : Icons.expand_more,
+                  size: 18,
+                  color: cs.onSurfaceVariant,
+                ),
+              ]),
+            ),
+          ),
+          // ── Expanded content ─────────────────────────────────────────
+          if (expanded)
+            markers.isEmpty
+                ? Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                    child: Text(
+                      connected
+                          ? 'No markers in log. Press "Load" to download.'
+                          : 'Connect device and press "Load" to see markers.',
+                      style: TextStyle(fontSize: 12, color: cs.onSurfaceVariant),
+                    ),
+                  )
+                : ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 200),
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                      itemCount: markers.length,
+                      itemBuilder: (_, i) {
+                        final r = markers[i];
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 3),
+                          child: Row(children: [
+                            Text('${i + 1}.',
+                                style: TextStyle(fontSize: 11, color: cs.onSurfaceVariant)),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                _fmtTime(r['ts'] as int? ?? 0),
+                                style: const TextStyle(fontSize: 12,
+                                    fontFeatures: [FontFeature.tabularFigures()]),
+                              ),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: markerColor.withOpacity(0.12),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Text(
+                                'Marker #${r['marker']}',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: markerColor,
+                                ),
+                              ),
+                            ),
+                          ]),
+                        );
+                      },
+                    ),
+                  ),
+        ],
+      ),
+    );
+  }
 }

@@ -93,18 +93,25 @@ static uint8_t _flash_take_access(void)
             continue;
         }
 
-        /* Force CPU2 into Shutdown and wait for it to acknowledge (SR2.C2DS=bit13).
-         * Without waiting, FUS may still assert CFGBSY between our check and STRT. */
-        uint32_t c2cr1_before = PWR->C2CR1;
-        PWR->C2CR1 = (PWR->C2CR1 & ~0x7UL) | 0x7UL;   /* LPMS = Shutdown */
-        uint32_t t2 = HAL_GetTick();
-        while (!(PWR->SR2 & (1UL << 13U))) {            /* C2DS = bit 13 */
-            if (HAL_GetTick() - t2 > 50U) break;        /* FUS usually ignores; don't wait long */
+        /* Force CPU2 into Shutdown only when BLE is NOT connected.
+         * During BLE connection LPMS=Shutdown kills the BLE stack the next time
+         * CPU2 sleeps between connection events. HSEM#2+#7 alone are sufficient
+         * for safe flash access: CPU2 checks HSEM#2 before asserting PESD. */
+        if (!BLE_IsConnected()) {
+            uint32_t c2cr1_before = PWR->C2CR1;
+            PWR->C2CR1 = (PWR->C2CR1 & ~0x7UL) | 0x7UL;   /* LPMS = Shutdown */
+            uint32_t t2 = HAL_GetTick();
+            while (!(PWR->SR2 & (1UL << 13U))) {            /* C2DS = bit 13 */
+                if (HAL_GetTick() - t2 > 50U) break;
+            }
+            UART_Printf("[CFG] flash access (took %lu ms) C2CR1:0x%lX->0x%lX SR2=0x%08lX C2DS=%lu\r\n",
+                        10000U - (uint32_t)(deadline - HAL_GetTick()),
+                        c2cr1_before, PWR->C2CR1, PWR->SR2,
+                        (PWR->SR2 >> 13U) & 1U);
+        } else {
+            UART_Printf("[CFG] flash access BLE-safe (took %lu ms) HSEM only\r\n",
+                        10000U - (uint32_t)(deadline - HAL_GetTick()));
         }
-        UART_Printf("[CFG] flash access (took %lu ms) C2CR1:0x%lX->0x%lX SR2=0x%08lX C2DS=%lu\r\n",
-                    10000U - (uint32_t)(deadline - HAL_GetTick()),
-                    c2cr1_before, PWR->C2CR1, PWR->SR2,
-                    (PWR->SR2 >> 13U) & 1U);
         return 1U;
     }
 

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../providers/ble_provider.dart';
 import '../providers/beacon_provider.dart';
@@ -245,7 +246,10 @@ class _LoggingTabState extends State<LoggingTab> {
             icon:     _sensorIcons[id]!,
             enabled:  _enabled[id]!,
             interval: _intervals[id]!,
-            onEnabledChanged: (v) => setState(() { _enabled[id] = v; _localDirty = true; }),
+            onEnabledChanged: (v) {
+              HapticFeedback.lightImpact();
+              setState(() { _enabled[id] = v; _localDirty = true; });
+            },
             onIntervalChanged: (v) => setState(() { _intervals[id] = v; _localDirty = true; }),
           )),
 
@@ -275,11 +279,14 @@ class _LoggingTabState extends State<LoggingTab> {
                     ChoiceChip(
                       label: Text(e[1] as String),
                       selected: _logMode == e[0] as int,
-                      onSelected: (_) => setState(() {
-                        _logMode       = e[0] as int;
-                        _localDirty    = true;
-                        _strategyDirty = true;
-                      }),
+                      onSelected: (_) {
+                        HapticFeedback.lightImpact();
+                        setState(() {
+                          _logMode       = e[0] as int;
+                          _localDirty    = true;
+                          _strategyDirty = true;
+                        });
+                      },
                     ),
                 ]),
 
@@ -291,21 +298,27 @@ class _LoggingTabState extends State<LoggingTab> {
                   ChoiceChip(
                     label: const Text('Stop recording'),
                     selected: _logOverflow == 0,
-                    onSelected: (_) => setState(() {
-                      _logOverflow   = 0;
-                      _localDirty    = true;
-                      _strategyDirty = true;
-                    }),
+                    onSelected: (_) {
+                      HapticFeedback.lightImpact();
+                      setState(() {
+                        _logOverflow   = 0;
+                        _localDirty    = true;
+                        _strategyDirty = true;
+                      });
+                    },
                   ),
                   ChoiceChip(
                     avatar: const Icon(Icons.loop, size: 14),
                     label: const Text('Circular overwrite'),
                     selected: _logOverflow == 1,
-                    onSelected: (_) => setState(() {
-                      _logOverflow   = 1;
-                      _localDirty    = true;
-                      _strategyDirty = true;
-                    }),
+                    onSelected: (_) {
+                      HapticFeedback.lightImpact();
+                      setState(() {
+                        _logOverflow   = 1;
+                        _localDirty    = true;
+                        _strategyDirty = true;
+                      });
+                    },
                   ),
                 ]),
 
@@ -317,21 +330,27 @@ class _LoggingTabState extends State<LoggingTab> {
                   ChoiceChip(
                     label: const Text('Seconds from boot'),
                     selected: _logTsSource == 0,
-                    onSelected: (_) => setState(() {
-                      _logTsSource   = 0;
-                      _localDirty    = true;
-                      _strategyDirty = true;
-                    }),
+                    onSelected: (_) {
+                      HapticFeedback.lightImpact();
+                      setState(() {
+                        _logTsSource   = 0;
+                        _localDirty    = true;
+                        _strategyDirty = true;
+                      });
+                    },
                   ),
                   ChoiceChip(
                     avatar: const Icon(Icons.access_time, size: 14),
                     label: const Text('Real time (RTC)'),
                     selected: _logTsSource == 1,
-                    onSelected: (_) => setState(() {
-                      _logTsSource   = 1;
-                      _localDirty    = true;
-                      _strategyDirty = true;
-                    }),
+                    onSelected: (_) {
+                      HapticFeedback.lightImpact();
+                      setState(() {
+                        _logTsSource   = 1;
+                        _localDirty    = true;
+                        _strategyDirty = true;
+                      });
+                    },
                   ),
                 ]),
               ]),
@@ -340,7 +359,9 @@ class _LoggingTabState extends State<LoggingTab> {
 
           const SizedBox(height: 12),
           FilledButton.icon(
-            onPressed: (ble.isConnected && !beacon.isBusy && _localDirty) ? _applyAll : null,
+            onPressed: (ble.isConnected && !beacon.isBusy && _localDirty)
+                ? () { HapticFeedback.lightImpact(); _applyAll(); }
+                : null,
             icon: const Icon(Icons.check),
             label: Text(!ble.isConnected ? 'Connect to apply'
                 : _localDirty ? 'Apply' : 'No changes'),
