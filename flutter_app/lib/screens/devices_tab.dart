@@ -17,7 +17,6 @@ class _DevicesTabState extends State<DevicesTab>
     with SingleTickerProviderStateMixin {
   late final TabController _tc;
   bool _bleExpanded = false;
-  bool _wakeExpanded = false;
 
   // BLE settings form state
   int _opMode = bleOpContinuous;
@@ -28,12 +27,6 @@ class _DevicesTabState extends State<DevicesTab>
   int _nameMode = 0;
   String _name = '';
   int _ledMode = 0;
-
-  // Wake config form state
-  bool _wakeEnable = false;
-  int  _threshMg  = 200;
-  int  _durMs     = 500;
-  int  _wakeAction = 0;
 
   @override
   void initState() {
@@ -77,16 +70,6 @@ class _DevicesTabState extends State<DevicesTab>
     });
   }
 
-  void _loadWakeCfg() {
-    final w = context.read<BeaconProvider>().wakeCfg;
-    if (w == null) return;
-    setState(() {
-      _wakeEnable = (w['enable'] as int) != 0;
-      _threshMg   = w['threshold_mg'] as int;
-      _durMs      = w['duration_ms'] as int;
-      _wakeAction = w['action'] as int;
-    });
-  }
 
   Future<void> _saveBleSettings() async {
     final beacon = context.read<BeaconProvider>();
@@ -99,22 +82,6 @@ class _DevicesTabState extends State<DevicesTab>
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(ok ? 'BLE settings saved' : 'Failed to save BLE settings'),
-        backgroundColor: ok ? Colors.green : Colors.red,
-      ));
-    }
-  }
-
-  Future<void> _saveWakeCfg() async {
-    final beacon = context.read<BeaconProvider>();
-    final ok = await beacon.writeWakeCfg({
-      'enable': _wakeEnable ? 1 : 0,
-      'threshold_mg': _threshMg,
-      'duration_ms': _durMs,
-      'action': _wakeAction,
-    });
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(ok ? 'Wake config saved' : 'Failed to save wake config'),
         backgroundColor: ok ? Colors.green : Colors.red,
       ));
     }
@@ -218,58 +185,6 @@ class _DevicesTabState extends State<DevicesTab>
     );
   }
 
-  Widget buildWakeConfig() {
-    final connected = context.watch<BleProvider>().isConnected;
-    return Card(
-      child: ExpansionTile(
-        leading: const Icon(Icons.motion_photos_on_outlined),
-        title: const Text('Wake-on-Motion'),
-        initiallyExpanded: _wakeExpanded,
-        onExpansionChanged: (v) {
-          setState(() => _wakeExpanded = v);
-          if (v) _loadWakeCfg();
-        },
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SwitchListTile(
-                  title: const Text('Enable Wake-on-Motion'),
-                  value: _wakeEnable,
-                  onChanged: (v) => setState(() => _wakeEnable = v),
-                  contentPadding: EdgeInsets.zero,
-                ),
-                _labelSlider('Threshold (mg)', _threshMg.toDouble(), 10, 2000, 199,
-                    (v) => setState(() => _threshMg = v.round())),
-                _labelSlider('Duration (ms)', _durMs.toDouble(), 50, 5000, 99,
-                    (v) => setState(() => _durMs = v.round())),
-                const SizedBox(height: 8),
-                Row(children: [
-                  const Text('Action: '),
-                  DropdownButton<int>(
-                    value: _wakeAction,
-                    onChanged: (v) => setState(() => _wakeAction = v!),
-                    items: const [
-                      DropdownMenuItem(value: 0, child: Text('Log')),
-                      DropdownMenuItem(value: 1, child: Text('TX pulse')),
-                      DropdownMenuItem(value: 2, child: Text('Both')),
-                    ],
-                  ),
-                ]),
-                const SizedBox(height: 12),
-                FilledButton(
-                  onPressed: connected ? _saveWakeCfg : null,
-                  child: const Text('Save Wake Config'),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 // ── Scan section ───────────────────────────────────────────────────────────
@@ -396,19 +311,36 @@ class _ScanSectionState extends State<_ScanSection> {
             ),
           ),
 
-        // ── When connected: BLE + Wake settings ────────────────────────
+        // ── When connected: BLE settings ───────────────────────────────
         if (ble.isConnected)
           Expanded(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
+              padding: EdgeInsets.fromLTRB(12, 8, 12,
+                  MediaQuery.of(context).padding.bottom + 32),
               child: Column(children: [
                 widget.parent.buildBleSettings(),
-                const SizedBox(height: 8),
-                widget.parent.buildWakeConfig(),
               ]),
             ),
           )
         else ...[
+
+          // ── Auto-scan toggle ─────────────────────────────────────────
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 4, 4, 0),
+            child: Row(children: [
+              const Icon(Icons.autorenew, size: 15, color: Colors.grey),
+              const SizedBox(width: 6),
+              const Text('Auto-scan', style: TextStyle(fontSize: 13)),
+              const Spacer(),
+              Transform.scale(
+                scale: 0.85,
+                child: Switch.adaptive(
+                  value: ble.autoScanEnabled,
+                  onChanged: (v) => ble.setAutoScanEnabled(v),
+                ),
+              ),
+            ]),
+          ),
 
           // ── Filter chip + scan status ────────────────────────────────
           Padding(

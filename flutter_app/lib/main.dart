@@ -75,9 +75,12 @@ class _InitWrapperState extends State<_InitWrapper> {
     setState(() => _status = 'Initializing…');
     await context.read<AppProvider>().init();
     await context.read<DevicesProvider>().load();
+    await context.read<BleProvider>().loadPrefs();
 
     if (mounted) {
       setState(() => _ready = true);
+      final ble = context.read<BleProvider>();
+      if (ble.autoScanEnabled) ble.startScan(timeoutSec: 12);
       _scheduleAutoUpdateCheck();
     }
   }

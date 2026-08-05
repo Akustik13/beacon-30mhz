@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../transport/nus_ble_transport.dart';
@@ -35,6 +36,33 @@ class BleProvider extends ChangeNotifier {
   void setAutoConnectMacs(Set<String> macs) {
     _autoConnectMacs  = Set.of(macs);
     _autoConnectFired = false;
+  }
+
+  // ── Auto-scan (continuous scanning with restart) ──────────────────────────
+  bool   _autoScanEnabled     = false;
+  Timer? _autoScanRestartTimer;
+
+  bool get autoScanEnabled => _autoScanEnabled;
+
+  Future<void> loadPrefs() async {
+    final prefs = await SharedPreferences.getInstance();
+    _autoScanEnabled = prefs.getBool('auto_scan') ?? false;
+    notifyListeners();
+  }
+
+  Future<void> setAutoScanEnabled(bool v) async {
+    _autoScanEnabled = v;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('auto_scan', v);
+    _autoScanRestartTimer?.cancel();
+    _autoScanRestartTimer = null;
+    if (v && !_isConnected && !_isScanning) startScan(timeoutSec: 12);
+    notifyListeners();
+  }
+
+  Future<void> _kickAutoScan() async {
+    if (!_autoScanEnabled || _isConnected || _isScanning) return;
+    await startScan(timeoutSec: 12);
   }
 
   // ── Auto-disconnect ───────────────────────────────────────────────────────
@@ -110,6 +138,10 @@ class BleProvider extends ChangeNotifier {
     _isScanning = false;
     _statusMsg = 'Found ${_scanResults.length} device(s)';
     notifyListeners();
+    if (_autoScanEnabled && !_isConnected) {
+      _autoScanRestartTimer?.cancel();
+      _autoScanRestartTimer = Timer(const Duration(seconds: 2), _kickAutoScan);
+    }
   }
 
   // ── Connect ───────────────────────────────────────────────────────────────
@@ -139,6 +171,7 @@ class BleProvider extends ChangeNotifier {
     _connectedName  = name;
     _isConnected    = true;
     _statusMsg      = 'Connected: $name';
+    HapticFeedback.mediumImpact();
     notifyListeners();
 
     // Watch for remote disconnect
@@ -171,6 +204,10 @@ class BleProvider extends ChangeNotifier {
     _rssi = 0;
     _statusMsg = 'Disconnected';
     notifyListeners();
+    if (_autoScanEnabled) {
+      _autoScanRestartTimer?.cancel();
+      _autoScanRestartTimer = Timer(const Duration(seconds: 2), _kickAutoScan);
+    }
   }
 
   Future<void> disconnect() async {
@@ -186,6 +223,10 @@ class BleProvider extends ChangeNotifier {
     _rssi = 0;
     _statusMsg = 'Disconnected';
     notifyListeners();
+    if (_autoScanEnabled) {
+      _autoScanRestartTimer?.cancel();
+      _autoScanRestartTimer = Timer(const Duration(seconds: 2), _kickAutoScan);
+    }
   }
 
   // ── Connect by MAC ────────────────────────────────────────────────────────
@@ -248,6 +289,7 @@ class BleProvider extends ChangeNotifier {
 
   @override
   void dispose() {
+    _autoScanRestartTimer?.cancel();
     _stopInactivityTimer();
     _rssiTimer?.cancel();
     _connSub?.cancel();
