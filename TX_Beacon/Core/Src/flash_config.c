@@ -62,11 +62,16 @@ uint8_t       g_cfg_staging_dirty = 0U;
 #define HSEM_R_LOCK         0x80000000UL
 #endif
 
+/* Verbose prints only over UART (not BLE) — avoids NUS TX pool stalls
+ * that can delay the command response by several seconds. */
+#define FLS_VERBOSE(fmt, ...) \
+    do { if (!BLE_IsConnected()) UART_Printf(fmt, ##__VA_ARGS__); } while(0)
+
 static uint8_t _flash_take_access(void)
 {
     __HAL_RCC_HSEM_CLK_ENABLE();
 
-    UART_Printf("[CFG] waiting for flash access... SR2=0x%08lX HSEM2=0x%08lX HSEM7=0x%08lX\r\n",
+    FLS_VERBOSE("[CFG] waiting for flash access... SR2=0x%08lX HSEM2=0x%08lX HSEM7=0x%08lX\r\n",
                 PWR->SR2, HSEM->R[FLASH_SEMID], HSEM->R[CPU2_BLOCK_SEMID]);
 
     uint32_t deadline = HAL_GetTick() + 10000U;   /* 10 s — covers FUS boot */
@@ -74,10 +79,10 @@ static uint8_t _flash_take_access(void)
 
     while (HAL_GetTick() < deadline) {
 
-        /* Periodic status print every 2 s */
+        /* Periodic status print every 2 s (UART only) */
         if (HAL_GetTick() - last_print > 2000U) {
             last_print = HAL_GetTick();
-            UART_Printf("[CFG] still waiting... HSEM2=0x%08lX HSEM7=0x%08lX SR=0x%08lX\r\n",
+            FLS_VERBOSE("[CFG] still waiting... HSEM2=0x%08lX HSEM7=0x%08lX SR=0x%08lX\r\n",
                         HSEM->R[FLASH_SEMID], HSEM->R[CPU2_BLOCK_SEMID], FLASH->SR);
         }
 
@@ -104,12 +109,12 @@ static uint8_t _flash_take_access(void)
             while (!(PWR->SR2 & (1UL << 13U))) {            /* C2DS = bit 13 */
                 if (HAL_GetTick() - t2 > 50U) break;
             }
-            UART_Printf("[CFG] flash access (took %lu ms) C2CR1:0x%lX->0x%lX SR2=0x%08lX C2DS=%lu\r\n",
+            FLS_VERBOSE("[CFG] flash access (took %lu ms) C2CR1:0x%lX->0x%lX SR2=0x%08lX C2DS=%lu\r\n",
                         10000U - (uint32_t)(deadline - HAL_GetTick()),
                         c2cr1_before, PWR->C2CR1, PWR->SR2,
                         (PWR->SR2 >> 13U) & 1U);
         } else {
-            UART_Printf("[CFG] flash access BLE-safe (took %lu ms) HSEM only\r\n",
+            FLS_VERBOSE("[CFG] flash access BLE-safe (took %lu ms) HSEM only\r\n",
                         10000U - (uint32_t)(deadline - HAL_GetTick()));
         }
         return 1U;
@@ -175,7 +180,7 @@ static uint8_t _erase_page_direct(uint32_t page, uint32_t page_addr)
 
         /* Atomic: re-check, clear errors, arm PER+PNB, fire STRT */
         if (att == 0U) {
-            UART_Printf("[FLS] att0 before STRT: CR=0x%08lX SR=0x%08lX C2SR=0x%08lX\r\n",
+            FLS_VERBOSE("[FLS] att0 before STRT: CR=0x%08lX SR=0x%08lX C2SR=0x%08lX\r\n",
                         FLASH->CR, FLASH->SR, FLASH->C2SR);
         }
         __disable_irq();
@@ -194,7 +199,7 @@ static uint8_t _erase_page_direct(uint32_t page, uint32_t page_addr)
         uint32_t sr_post = FLASH->SR;
         __enable_irq();
         if (att == 0U) {
-            UART_Printf("[FLS] att0 after STRT: CR=0x%08lX SR_pre=0x%08lX SR_post=0x%08lX\r\n",
+            FLS_VERBOSE("[FLS] att0 after STRT: CR=0x%08lX SR_pre=0x%08lX SR_post=0x%08lX\r\n",
                         FLASH->CR, sr_pre, sr_post);
         }
 
@@ -244,7 +249,7 @@ static uint8_t _erase_page_direct(uint32_t page, uint32_t page_addr)
             continue;   /* erase dropped — retry */
         }
 
-        UART_Printf("[FLS] erase pg%lu OK (att=%lu)\r\n", page, att + 1U);
+        FLS_VERBOSE("[FLS] erase pg%lu OK (att=%lu)\r\n", page, att + 1U);
         return 1U;
     }
 
@@ -258,14 +263,14 @@ uint8_t Flash_ErasePage(uint32_t page)
 {
     uint32_t addr = 0x08000000UL + page * 2048UL;   /* STM32WB1M: 2KB pages */
 
-    UART_Printf("[FLS] erase page %lu @ 0x%08lX\r\n", page, addr);
-    UART_Printf("[FLS] SFR=0x%08lX WRP1AR=0x%08lX CR=0x%08lX\r\n",
+    FLS_VERBOSE("[FLS] erase page %lu @ 0x%08lX\r\n", page, addr);
+    FLS_VERBOSE("[FLS] SFR=0x%08lX WRP1AR=0x%08lX CR=0x%08lX\r\n",
                 FLASH->SFR, FLASH->WRP1AR, FLASH->CR);
-    UART_Printf("[FLS] C2SR=0x%08lX C2CR=0x%08lX ACR=0x%08lX\r\n",
+    FLS_VERBOSE("[FLS] C2SR=0x%08lX C2CR=0x%08lX ACR=0x%08lX\r\n",
                 FLASH->C2SR, FLASH->C2CR, FLASH->ACR);
-    UART_Printf("[FLS] PCROP1ASR=0x%08lX PCROP1AER=0x%08lX ECCR=0x%08lX\r\n",
+    FLS_VERBOSE("[FLS] PCROP1ASR=0x%08lX PCROP1AER=0x%08lX ECCR=0x%08lX\r\n",
                 FLASH->PCROP1ASR, FLASH->PCROP1AER, FLASH->ECCR);
-    UART_Printf("[FLS] PCROP1BSR=0x%08lX PCROP1BER=0x%08lX C2CR1=0x%08lX\r\n",
+    FLS_VERBOSE("[FLS] PCROP1BSR=0x%08lX PCROP1BER=0x%08lX C2CR1=0x%08lX\r\n",
                 FLASH->PCROP1BSR, FLASH->PCROP1BER, PWR->C2CR1);
 
     if (!_flash_take_access()) {
@@ -274,14 +279,14 @@ uint8_t Flash_ErasePage(uint32_t page)
     }
     _flash_sr_clear();
 
-    UART_Printf("[FLS] CR before unlock=0x%08lX\r\n", FLASH->CR);
+    FLS_VERBOSE("[FLS] CR before unlock=0x%08lX\r\n", FLASH->CR);
     if (HAL_FLASH_Unlock() != HAL_OK) {
         UART_Printf("[FLS] unlock FAILED err=0x%08lX SR=0x%08lX\r\n",
                     HAL_FLASH_GetError(), FLASH->SR);
         _flash_release_access();
         return 0U;
     }
-    UART_Printf("[FLS] CR after unlock=0x%08lX\r\n", FLASH->CR);
+    FLS_VERBOSE("[FLS] CR after unlock=0x%08lX\r\n", FLASH->CR);
 
     _flash_sr_clear();
     uint8_t ok = _erase_page_direct(page, addr);
@@ -638,14 +643,14 @@ static void _build_v2(TxConfigV2_t *cfg)
 /* ── Write v2 struct to flash page 60 ────────────────────────────────────── */
 static uint8_t _write_v2_to_flash(const TxConfigV2_t *cfg)
 {
-    UART_Printf("[CFG] v2 save page=%u addr=0x%08lX\r\n",
+    FLS_VERBOSE("[CFG] v2 save page=%u addr=0x%08lX\r\n",
                 FLASH_CONFIG_PAGE, (uint32_t)FLASH_CONFIG_ADDR);
 
     /* Diagnose flash state before touching (split to stay within 128-byte printf buf) */
-    UART_Printf("[CFG] page=%u addr=0x%08lX SFR=0x%08lX WRP1AR=0x%08lX\r\n",
+    FLS_VERBOSE("[CFG] page=%u addr=0x%08lX SFR=0x%08lX WRP1AR=0x%08lX\r\n",
                 FLASH_CONFIG_PAGE, (uint32_t)FLASH_CONFIG_ADDR,
                 FLASH->SFR, FLASH->WRP1AR);
-    UART_Printf("[CFG] SFSA=%lu FSD=%lu WRP1BR=0x%08lX CR=0x%08lX SR2=0x%08lX\r\n",
+    FLS_VERBOSE("[CFG] SFSA=%lu FSD=%lu WRP1BR=0x%08lX CR=0x%08lX SR2=0x%08lX\r\n",
                 FLASH->SFR & 0xFFUL, (FLASH->SFR >> 8U) & 1U,
                 FLASH->WRP1BR, FLASH->CR, PWR->SR2);
 
@@ -654,14 +659,14 @@ static uint8_t _write_v2_to_flash(const TxConfigV2_t *cfg)
 
     _flash_sr_clear();
 
-    UART_Printf("[CFG] CR before unlock=0x%08lX\r\n", FLASH->CR);
+    FLS_VERBOSE("[CFG] CR before unlock=0x%08lX\r\n", FLASH->CR);
     if (HAL_FLASH_Unlock() != HAL_OK) {
         UART_Printf("[CFG] unlock FAIL err=0x%08lX SR=0x%08lX\r\n",
                     HAL_FLASH_GetError(), FLASH->SR);
         _flash_release_access();
         return 0U;
     }
-    UART_Printf("[CFG] CR after unlock=0x%08lX\r\n", FLASH->CR);
+    FLS_VERBOSE("[CFG] CR after unlock=0x%08lX\r\n", FLASH->CR);
 
     _flash_sr_clear();
 
@@ -727,10 +732,10 @@ static uint8_t _write_v2_to_flash(const TxConfigV2_t *cfg)
         return 0U;
     }
 
-    UART_Printf("[CFG] v2 saved: mode=%u ch=%u pwr=%u dur=%lu per=%lu led=%u\r\n",
+    FLS_VERBOSE("[CFG] v2 saved: mode=%u ch=%u pwr=%u dur=%lu per=%lu led=%u\r\n",
                 cfg->tx_mode, cfg->ch_idx, cfg->pwr_idx,
                 cfg->tx_duration_ms, cfg->tx_period_ms, cfg->led_mode);
-    UART_Printf("[CFG]        hours=0x%08lX days=0x%02X months=0x%04X\r\n",
+    FLS_VERBOSE("[CFG]        hours=0x%08lX days=0x%02X months=0x%04X\r\n",
                 cfg->active_hours_mask, cfg->active_days_mask, cfg->active_months_mask);
     return 1U;
 }

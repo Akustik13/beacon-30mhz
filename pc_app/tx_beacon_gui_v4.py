@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView, QSizePolicy,
     QMessageBox, QFileDialog, QInputDialog, QStackedWidget, QButtonGroup,
     QRadioButton, QAbstractItemView, QSplitter, QPlainTextEdit,
-    QGraphicsOpacityEffect, QDialog
+    QGraphicsOpacityEffect, QDialog, QGroupBox
 )
 from PyQt6.QtCore import (
     Qt, QThread, pyqtSignal, QObject, QTimer, QSettings, QSize, QRect, QRectF,
@@ -704,8 +704,8 @@ COND_LABELS = [
     (COND_TEMP_ABOVE, 'Temp above'),     (COND_TEMP_BELOW, 'Temp below'),
     (COND_NO_MOTION,  'No motion for'),  (COND_MOTION,     'Motion detected'),
     (COND_LIGHT_BELOW,'Light below'),    (COND_LIGHT_ABOVE,'Light above'),
-    (COND_EVERY_NCYC, 'Every N TX cycles'),
-    (COND_ALWAYS,     'Always (every cycle)'),
+    (COND_EVERY_NCYC, 'Every N wake cycles'),
+    (COND_ALWAYS,     'Always (every wake)'),
     (COND_BEFORE_BLE, 'Before BLE start'),
     (COND_EVERY_NHRS, 'Every H h M m S s'),
 ]
@@ -1956,6 +1956,11 @@ class BleTransport(UartTransport):
             return rssi
         return None
 
+    def flush_uptime(self) -> Tuple[bool, str]:
+        # Flash erase+write over BLE needs more margin than default 5s
+        ok, lines = self._request('HWSAVE!', timeout=12.0)
+        return ok, lines[0] if lines else ('OK' if ok else 'ERR timeout')
+
     # ── Overrides that don't apply over BLE ───────────────────────────────────
 
     def cmd_uart_mode(self, mode: int) -> int:
@@ -3194,9 +3199,6 @@ class OverviewTab(QWidget):
 # ─────────────────────────────────────────────────────────────────────────────
 class BeaconTab(QWidget):
     config_changed       = pyqtSignal()
-    wom_apply_requested  = pyqtSignal(dict)   # {'enable', 'threshold_mg', 'duration_ms', 'action'}
-    wom_refresh_requested= pyqtSignal()
-    wom_clear_requested  = pyqtSignal()
 
     def __init__(self, profiles: ProfileManager, parent=None):
         super().__init__(parent)
@@ -3426,96 +3428,11 @@ class BeaconTab(QWidget):
         sc_lay.addWidget(self._lbl_sched_status)
         root.addWidget(sc_card)
 
-        # Wake-on-motion card
-        wom_card = QFrame(); wom_card.setObjectName('card')
-        wom_lay = QVBoxLayout(wom_card); wom_lay.setContentsMargins(16, 16, 16, 16); wom_lay.setSpacing(10)
-        wom_title = QLabel('🔵  Wake-on-motion'); wom_title.setFont(QFont('Segoe UI', 11, QFont.Weight.Bold))
-        wom_lay.addWidget(wom_title)
-
-        wom_conflict = QLabel(
-            '⚠  Cannot arm WoM while the accelerometer is power-gated. '
-            'Keep the sensor powered while WoM is active.')
-        wom_conflict.setWordWrap(True)
-        wom_conflict.setStyleSheet('color:#b45000; font-size:9pt; background:transparent;')
-        wom_lay.addWidget(wom_conflict)
-
-        en_row = QHBoxLayout()
-        en_row.addWidget(QLabel('Enable:'))
-        self._wom_tog = ToggleSwitch()
-        en_row.addWidget(self._wom_tog); en_row.addStretch()
-        wom_lay.addLayout(en_row)
-
-        thr_row = QHBoxLayout()
-        thr_row.addWidget(QLabel('Threshold:'))
-        self._wom_thr = QSpinBox(); self._wom_thr.setRange(1, 16383); self._wom_thr.setValue(500)
-        self._wom_thr.setSuffix(' mg'); self._wom_thr.setFixedWidth(100)
-        thr_row.addWidget(self._wom_thr)
-        thr_row.addSpacing(20)
-        thr_row.addWidget(QLabel('Duration:'))
-        self._wom_dur = QSpinBox(); self._wom_dur.setRange(0, 65535); self._wom_dur.setValue(100)
-        self._wom_dur.setSuffix(' ms'); self._wom_dur.setFixedWidth(100)
-        thr_row.addWidget(self._wom_dur)
-        thr_row.addStretch()
-        wom_lay.addLayout(thr_row)
-
-        act_row = QHBoxLayout()
-        act_row.addWidget(QLabel('Action:'))
-        self._chk_wom_wake   = QCheckBox('Wake MCU')
-        self._chk_wom_tx     = QCheckBox('TX burst')
-        self._chk_wom_log    = QCheckBox('Log marker')
-        self._chk_wom_wake.setChecked(True)
-        for w in [self._chk_wom_wake, self._chk_wom_tx, self._chk_wom_log]:
-            act_row.addWidget(w)
-        act_row.addStretch()
-        wom_lay.addLayout(act_row)
-
-        wom_btn_row = QHBoxLayout()
-        self._btn_wom_apply   = QPushButton('Apply WoM'); self._btn_wom_apply.setObjectName('secondary')
-        self._btn_wom_refresh = QPushButton('Refresh');   self._btn_wom_refresh.setObjectName('secondary')
-        self._btn_wom_clear   = QPushButton('Clear counter'); self._btn_wom_clear.setObjectName('secondary')
-        self._lbl_wom_status  = QLabel('—')
-        wom_btn_row.addWidget(self._btn_wom_apply)
-        wom_btn_row.addWidget(self._btn_wom_refresh)
-        wom_btn_row.addWidget(self._btn_wom_clear)
-        wom_btn_row.addSpacing(16); wom_btn_row.addWidget(self._lbl_wom_status)
-        wom_btn_row.addStretch()
-        wom_lay.addLayout(wom_btn_row)
-
-        self._btn_wom_apply.clicked.connect(self._on_wom_apply)
-        self._btn_wom_refresh.clicked.connect(self.wom_refresh_requested.emit)
-        self._btn_wom_clear.clicked.connect(self.wom_clear_requested.emit)
-        root.addWidget(wom_card)
-
         root.addStretch()
 
         scroll.setWidget(inner)
         _install_drag_scroll(scroll)
         outer.addWidget(scroll)
-
-    def get_wom_params(self) -> dict:
-        action = 0
-        if self._chk_wom_wake.isChecked(): action |= WAKE_ACTION_WAKE_MCU
-        if self._chk_wom_tx.isChecked():   action |= WAKE_ACTION_TX_BURST
-        if self._chk_wom_log.isChecked():  action |= WAKE_ACTION_LOG_MARKER
-        return {'enable': 1 if self._wom_tog.isChecked() else 0,
-                'threshold_mg': self._wom_thr.value(),
-                'duration_ms':  self._wom_dur.value(),
-                'action':       action}
-
-    def set_wom_state(self, d: dict):
-        self._wom_tog.setChecked(bool(d.get('enable', 0)))
-        self._wom_thr.setValue(d.get('threshold_mg', 500))
-        self._wom_dur.setValue(d.get('duration_ms', 100))
-        action = d.get('action', WAKE_ACTION_WAKE_MCU)
-        self._chk_wom_wake.setChecked(bool(action & WAKE_ACTION_WAKE_MCU))
-        self._chk_wom_tx.setChecked(bool(action & WAKE_ACTION_TX_BURST))
-        self._chk_wom_log.setChecked(bool(action & WAKE_ACTION_LOG_MARKER))
-
-    def set_wom_status_text(self, text: str):
-        self._lbl_wom_status.setText(text)
-
-    def _on_wom_apply(self):
-        self.wom_apply_requested.emit(self.get_wom_params())
 
     def _on_scope_changed(self):
         sid = self._scope_grp.checkedId()
@@ -4692,17 +4609,24 @@ class DataTab(QWidget):
             else:
                 time_str = f'+{ts // 3600}h {(ts % 3600) // 60}m'
             ax = r.get('accel_x'); ay = r.get('accel_y'); az = r.get('accel_z')
-            vals = [
-                str(i), time_str,
-                f"{r.get('temp_c', 0):.1f}" if isinstance(r.get('temp_c'), (int, float)) else '—',
-                str(r.get('light_raw', '—')),
-                str(r.get('bat_pct', '—')),
-                str(ax) if ax is not None else '—',
-                str(ay) if ay is not None else '—',
-                str(az) if az is not None else '—',
-            ]
+            if 'marker' in r:
+                vals = [str(i), time_str, f'● Marker #{r["marker"]}',
+                        '—', '—', '—', '—', '—']
+            else:
+                vals = [
+                    str(i), time_str,
+                    f"{r.get('temp_c', 0):.1f}" if isinstance(r.get('temp_c'), (int, float)) else '—',
+                    str(r.get('light_raw', '—')),
+                    str(r.get('bat_pct', '—')),
+                    str(ax) if ax is not None else '—',
+                    str(ay) if ay is not None else '—',
+                    str(az) if az is not None else '—',
+                ]
             for j, val in enumerate(vals):
-                self._table.setItem(i, j, QTableWidgetItem(val))
+                item = QTableWidgetItem(val)
+                if 'marker' in r:
+                    item.setForeground(QColor('#e67e00'))
+                self._table.setItem(i, j, item)
 
     # ── Markers ───────────────────────────────────────────────────────────────
 
@@ -6384,9 +6308,9 @@ class _EventCard(QFrame):
         cr.addWidget(QLabel('Cooldown:'))
         self._cool = QSpinBox()
         self._cool.setRange(0, 255)
-        self._cool.setSuffix(' TX cycles')
-        self._cool.setFixedWidth(125)
-        self._cool.setToolTip('Minimum TX cycles between triggers  (0 = always)')
+        self._cool.setSuffix(' s')
+        self._cool.setFixedWidth(80)
+        self._cool.setToolTip('Min seconds between fires (0 = fire on every wake)')
         self._cool.valueChanged.connect(lambda _: self.changed.emit())
         cr.addWidget(self._cool)
         cr.addStretch()
@@ -6470,6 +6394,10 @@ class _EventCard(QFrame):
 class EventsTab(QWidget):
     events_read_requested  = pyqtSignal()
     events_write_requested = pyqtSignal(bytes)   # 112-byte blob
+    markers_load_requested = pyqtSignal()
+    wom_apply_requested    = pyqtSignal(dict)    # {'enable', 'threshold_mg', 'duration_ms', 'action'}
+    wom_refresh_requested  = pyqtSignal()
+    wom_clear_requested    = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -6510,6 +6438,13 @@ class EventsTab(QWidget):
         self._btn_write.clicked.connect(self._do_write)
         bl.addWidget(self._btn_write)
 
+        self._btn_markers = QPushButton('📋 Load Markers')
+        self._btn_markers.setObjectName('secondary')
+        self._btn_markers.setEnabled(False)
+        self._btn_markers.setToolTip('Download log and show only marker records')
+        self._btn_markers.clicked.connect(self.markers_load_requested)
+        bl.addWidget(self._btn_markers)
+
         self._btn_clr_all = QPushButton('🗑 Clear all')
         self._btn_clr_all.setObjectName('secondary')
         self._btn_clr_all.clicked.connect(self._clear_all)
@@ -6538,6 +6473,97 @@ class EventsTab(QWidget):
 
         scroll.setWidget(inner)
         outer.addWidget(scroll, 1)
+
+        # ── Wake-on-Motion panel ───────────────────────────────────────────
+        wom_box = QGroupBox('🔵  Wake-on-Motion  —  hardware accelerometer trigger')
+        wom_box.setCheckable(True)
+        wom_box.setChecked(False)
+        wom_box.setStyleSheet('QGroupBox { font-size: 9pt; font-weight: bold; }')
+        wom_vlay = QVBoxLayout(wom_box)
+        wom_vlay.setContentsMargins(12, 6, 12, 10)
+        wom_vlay.setSpacing(8)
+
+        wom_note = QLabel(
+            '⚠  Sensor must be powered on while WoM is armed.  '
+            'Use Events COND_MOTION to react to motion in rules above.')
+        wom_note.setWordWrap(True)
+        wom_note.setStyleSheet('color:#b45000; font-size:9pt; background:transparent;')
+        wom_vlay.addWidget(wom_note)
+
+        row1 = QHBoxLayout()
+        row1.addWidget(QLabel('Enable:'))
+        self._wom_tog = ToggleSwitch()
+        row1.addWidget(self._wom_tog)
+        row1.addSpacing(24)
+        row1.addWidget(QLabel('Threshold:'))
+        self._wom_thr = QSpinBox(); self._wom_thr.setRange(1, 16383); self._wom_thr.setValue(500)
+        self._wom_thr.setSuffix(' mg'); self._wom_thr.setFixedWidth(90)
+        row1.addWidget(self._wom_thr)
+        row1.addSpacing(16)
+        row1.addWidget(QLabel('Duration:'))
+        self._wom_dur = QSpinBox(); self._wom_dur.setRange(0, 65535); self._wom_dur.setValue(100)
+        self._wom_dur.setSuffix(' ms'); self._wom_dur.setFixedWidth(90)
+        row1.addWidget(self._wom_dur)
+        row1.addStretch()
+        wom_vlay.addLayout(row1)
+
+        row2 = QHBoxLayout()
+        row2.addWidget(QLabel('Action:'))
+        self._chk_wom_wake = QCheckBox('Wake MCU'); self._chk_wom_wake.setChecked(True)
+        self._chk_wom_tx   = QCheckBox('TX burst')
+        self._chk_wom_log  = QCheckBox('Log marker')
+        for w in [self._chk_wom_wake, self._chk_wom_tx, self._chk_wom_log]:
+            row2.addWidget(w)
+        row2.addStretch()
+        wom_vlay.addLayout(row2)
+
+        row3 = QHBoxLayout()
+        self._btn_wom_apply   = QPushButton('Apply'); self._btn_wom_apply.setObjectName('secondary')
+        self._btn_wom_refresh = QPushButton('Refresh status'); self._btn_wom_refresh.setObjectName('secondary')
+        self._btn_wom_clear   = QPushButton('Clear counter'); self._btn_wom_clear.setObjectName('secondary')
+        self._lbl_wom_status  = QLabel('—')
+        self._lbl_wom_status.setStyleSheet('color:#888; font-size:9pt;')
+        row3.addWidget(self._btn_wom_apply)
+        row3.addWidget(self._btn_wom_refresh)
+        row3.addWidget(self._btn_wom_clear)
+        row3.addSpacing(12); row3.addWidget(self._lbl_wom_status)
+        row3.addStretch()
+        wom_vlay.addLayout(row3)
+
+        self._btn_wom_apply.clicked.connect(self._on_wom_apply)
+        self._btn_wom_refresh.clicked.connect(self.wom_refresh_requested.emit)
+        self._btn_wom_clear.clicked.connect(self.wom_clear_requested.emit)
+        self._btn_wom_apply.setEnabled(False)
+        self._btn_wom_refresh.setEnabled(False)
+        self._btn_wom_clear.setEnabled(False)
+        outer.addWidget(wom_box)
+
+        # ── Markers panel ─────────────────────────────────────────────────
+        self._markers_box = QGroupBox('Log Markers  (from device flash log)')
+        self._markers_box.setCheckable(True)
+        self._markers_box.setChecked(False)   # collapsed by default
+        self._markers_box.setStyleSheet('QGroupBox { font-size: 9pt; color: #888; }')
+        mb_lay = QVBoxLayout(self._markers_box)
+        mb_lay.setContentsMargins(8, 4, 8, 8)
+        mb_lay.setSpacing(4)
+
+        self._markers_table = QTableWidget(0, 3)
+        self._markers_table.setHorizontalHeaderLabels(['#', 'Time', 'Tag'])
+        self._markers_table.horizontalHeader().setStretchLastSection(True)
+        self._markers_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self._markers_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._markers_table.setAlternatingRowColors(True)
+        self._markers_table.setFixedHeight(160)
+        self._markers_table.verticalHeader().setVisible(False)
+        self._markers_table.setColumnWidth(0, 40)
+        self._markers_table.setColumnWidth(1, 170)
+        mb_lay.addWidget(self._markers_table)
+
+        self._markers_lbl = QLabel('Press  📋 Load Markers  to download log markers from device.')
+        self._markers_lbl.setStyleSheet('color: #999; font-size: 8pt;')
+        mb_lay.addWidget(self._markers_lbl)
+
+        outer.addWidget(self._markers_box)
 
         # Start with Event 1
         self._add_event()
@@ -6583,9 +6609,77 @@ class EventsTab(QWidget):
     def set_connected(self, v: bool):
         self._btn_read.setEnabled(v)
         self._btn_write.setEnabled(v)
+        self._btn_markers.setEnabled(v)
+        self._btn_wom_apply.setEnabled(v)
+        self._btn_wom_refresh.setEnabled(v)
+        self._btn_wom_clear.setEnabled(v)
 
     def _do_write(self):
         self.events_write_requested.emit(self.encode_blob())
+
+    # ── WoM ────────────────────────────────────────────────────────────────
+    def get_wom_params(self) -> dict:
+        action = 0
+        if self._chk_wom_wake.isChecked(): action |= WAKE_ACTION_WAKE_MCU
+        if self._chk_wom_tx.isChecked():   action |= WAKE_ACTION_TX_BURST
+        if self._chk_wom_log.isChecked():  action |= WAKE_ACTION_LOG_MARKER
+        return {'enable': 1 if self._wom_tog.isChecked() else 0,
+                'threshold_mg': self._wom_thr.value(),
+                'duration_ms':  self._wom_dur.value(),
+                'action':       action}
+
+    def set_wom_state(self, d: dict):
+        self._wom_tog.setChecked(bool(d.get('enable', 0)))
+        self._wom_thr.setValue(d.get('threshold_mg', 500))
+        self._wom_dur.setValue(d.get('duration_ms', 100))
+        action = d.get('action', WAKE_ACTION_WAKE_MCU)
+        self._chk_wom_wake.setChecked(bool(action & WAKE_ACTION_WAKE_MCU))
+        self._chk_wom_tx.setChecked(bool(action & WAKE_ACTION_TX_BURST))
+        self._chk_wom_log.setChecked(bool(action & WAKE_ACTION_LOG_MARKER))
+
+    def set_wom_status_text(self, text: str):
+        self._lbl_wom_status.setText(text)
+
+    def _on_wom_apply(self):
+        self.wom_apply_requested.emit(self.get_wom_params())
+
+    def set_markers_progress(self, done: int, total: int):
+        if total > 0:
+            pct = int(done * 100 / total)
+            self._btn_markers.setText(f'⏳ {done}/{total} ({pct}%)')
+        else:
+            self._btn_markers.setText('⏳ Loading…')
+
+    def set_markers(self, records: list, rtc_unix: int = 0):
+        """Display only LOGREC_TYPE_MARKER records in the markers panel."""
+        markers = [r for r in records if 'marker' in r]
+        self._markers_table.setRowCount(0)
+        self._btn_markers.setText('📋 Load Markers')
+        if not markers:
+            self._markers_lbl.setText('No markers found in log.')
+            self._markers_box.setChecked(True)
+            return
+        import datetime as _dt
+        for i, r in enumerate(markers):
+            ts = r.get('ts', 0)
+            if rtc_unix and ts:
+                try:
+                    t = _dt.datetime.utcfromtimestamp(ts)
+                    time_str = t.strftime('%Y-%m-%d %H:%M:%S')
+                except Exception:
+                    time_str = str(ts)
+            else:
+                time_str = str(ts)
+            tag = r.get('marker', 0)
+            row = self._markers_table.rowCount()
+            self._markers_table.insertRow(row)
+            for col, val in enumerate([str(i + 1), time_str, f'Marker #{tag}']):
+                item = QTableWidgetItem(val)
+                item.setForeground(QColor('#e67e00'))
+                self._markers_table.setItem(row, col, item)
+        self._markers_lbl.setText(f'{len(markers)} marker(s) found in log.')
+        self._markers_box.setChecked(True)
+        self._btn_markers.setText('📋 Load Markers')
 
     # ── Wire format ────────────────────────────────────────────────────────
     def encode_blob(self) -> bytes:
@@ -6770,9 +6864,9 @@ class MainWindow(QMainWindow):
         self._tab_settings.hwdesc_read_requested.connect(self._on_hwdesc_read)
         self._tab_settings.hwdesc_write_requested.connect(self._on_hwdesc_write)
         self._tab_settings.hwdesc_commit_requested.connect(self._on_hwdesc_commit)
-        self._tab_beacon.wom_apply_requested.connect(self._on_wom_apply)
-        self._tab_beacon.wom_refresh_requested.connect(self._on_wom_refresh)
-        self._tab_beacon.wom_clear_requested.connect(self._on_wom_clear)
+        self._tab_events.wom_apply_requested.connect(self._on_wom_apply)
+        self._tab_events.wom_refresh_requested.connect(self._on_wom_refresh)
+        self._tab_events.wom_clear_requested.connect(self._on_wom_clear)
         self._refresh_timer = QTimer(self)
         live_en, live_iv = self._tab_settings.get_live_settings()
         self._refresh_timer.setInterval(max(100, int(live_iv * 1000)) if live_en else 5000)
@@ -7145,6 +7239,7 @@ class MainWindow(QMainWindow):
         # Events tab signals
         self._tab_events.events_read_requested.connect(self._on_events_read)
         self._tab_events.events_write_requested.connect(self._on_events_write)
+        self._tab_events.markers_load_requested.connect(self._start_download)
         # Persist spark and BLE auto-disconnect settings on change
         self._tab_overview._spark_combo.currentIndexChanged.connect(
             lambda _: self._save_settings())
@@ -7849,6 +7944,7 @@ class MainWindow(QMainWindow):
         self._dl_last_light  = None   # None until first LIGHT record seen
         self._dl_fmt_ver     = 1   # overwritten below once we hear from firmware
         self._tab_data.set_download_progress(0, total, capacity)
+        self._tab_events.set_markers_progress(0, total)
         self._log(f'{ICO["download"]} Download started: {total} records  (cap {capacity})')
 
         # Fetch log format version so the parser can handle v2 ACCEL records
@@ -7893,6 +7989,7 @@ class MainWindow(QMainWindow):
         actual = len(merged)
         self._tab_data.set_download_progress(actual, actual or 1, cap)
         self._tab_data.set_records(merged, rtc, circ)
+        self._tab_events.set_markers(merged, rtc)
         self._log(f'{ICO["ok"]} Download done: {actual} rows  ({len(self._dl_records)} raw records)  (cap {cap})')
         if self._connected:
             self._refresh_timer.start()
@@ -7996,7 +8093,13 @@ class MainWindow(QMainWindow):
                         'accel_y': ay,
                         'accel_z': az,
                     })
-                # MARKER and unknown types: skip silently
+                elif typ == LOGREC_TYPE_MARKER:
+                    tag = raw16[6]
+                    self._dl_records.append({
+                        'ts':     ts,
+                        'marker': int(tag),
+                    })
+                # unknown types: skip silently
                 received += 1
                 continue
 
@@ -8030,6 +8133,7 @@ class MainWindow(QMainWindow):
 
         self._dl_offset += received
         self._tab_data.set_download_progress(self._dl_offset, self._dl_total, cap)
+        self._tab_events.set_markers_progress(self._dl_offset, self._dl_total)
         if self._dl_offset < self._dl_total:
             self._dl_batch()
         else:
@@ -8337,7 +8441,7 @@ class MainWindow(QMainWindow):
                 self._log(f'{ICO["ok"]} WoM config applied')
             elif rc == CMD_ERR_STATE:
                 self._banner.show_err('WoM: cannot arm — sensor is powered off')
-                self._tab_beacon.set_wom_status_text('⚠ Sensor powered off')
+                self._tab_events.set_wom_status_text('⚠ Sensor powered off')
             else:
                 self._banner.show_err(f'WoM apply failed (rc=0x{rc:02X})')
 
@@ -8363,7 +8467,7 @@ class MainWindow(QMainWindow):
                 last  = result.get('last_trigger_ts', 0)
                 status_txt = (f'{"Armed" if armed else "Disarmed"}  '
                               f'count={count}  last_ts={last}')
-                self._tab_beacon.set_wom_status_text(status_txt)
+                self._tab_events.set_wom_status_text(status_txt)
                 self._log(f'{ICO["ok"]} WoM status: {status_txt}')
 
         w = Worker(_do)
@@ -8385,7 +8489,7 @@ class MainWindow(QMainWindow):
             rc, _ = result if isinstance(result, tuple) else (result, b'')
             if rc == CMD_OK:
                 self._banner.show_ok('WoM counter cleared', 2000)
-                self._tab_beacon.set_wom_status_text('count=0')
+                self._tab_events.set_wom_status_text('count=0')
                 self._log(f'{ICO["ok"]} WoM counter cleared')
             else:
                 self._banner.show_err(f'WoM clear failed (rc=0x{rc:02X})')
