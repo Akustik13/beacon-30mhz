@@ -302,29 +302,34 @@ class _LineChartCardState extends State<_LineChartCard> {
   // Zoom / pan state
   double _zoom    = 1.0;  // 1.0 = full data range visible
   double _panFrac = 0.0;  // 0.0 = leftmost, 1.0 = rightmost of zoomed window
+  double _yOffset = 0.0;  // Y offset in data units (+ = view moves up)
 
-  // Pointer tracking (Listener-based pinch detection — no gesture arena conflict)
+  // Pointer tracking (Listener-based — no gesture arena conflict)
   final _pts = <int, Offset>{};
-  double _gsZoom   = 1.0;
-  double _gsDist   = 0.0;
-  Offset _gsCenter = Offset.zero;
+  double  _gsZoom      = 1.0;
+  double  _gsDist      = 0.0;
+  Offset  _gsCenter    = Offset.zero;
+  Offset? _lastSinglePos;   // for single-finger pan
 
-  // Data range (set each build, read by pointer handlers)
-  double _spanX    = 1.0;
-  double _dataMinX = 0.0;
+  // Data range — set each build, used by pointer handlers
+  double _spanX     = 1.0;
+  double _dataMinX  = 0.0;
+  double _lastYRange = 1.0; // current yMax-yMin (set each build)
 
   @override
   void didUpdateWidget(_LineChartCard old) {
     super.didUpdateWidget(old);
     if (widget.points != old.points) {
-      _zoom = 1.0;
-      _panFrac = 0.0;
+      _zoom = 1.0; _panFrac = 0.0; _yOffset = 0.0;
     }
   }
 
   void _pDown(PointerDownEvent e) {
     _pts[e.pointer] = e.localPosition;
-    if (_pts.length == 2) {
+    if (_pts.length == 1) {
+      _lastSinglePos = e.localPosition;
+    } else if (_pts.length == 2) {
+      _lastSinglePos = null; // switch to pinch mode
       final vs = _pts.values.toList();
       _gsDist   = (vs[0] - vs[1]).distance;
       _gsZoom   = _zoom;
@@ -332,42 +337,63 @@ class _LineChartCardState extends State<_LineChartCard> {
     }
   }
 
-  void _pMove(PointerMoveEvent e, double chartW) {
+  void _pMove(PointerMoveEvent e, double chartW, double chartH) {
     _pts[e.pointer] = e.localPosition;
-    if (_pts.length < 2 || _gsDist <= 0) return;
 
-    final vs     = _pts.values.toList();
-    final dist   = (vs[0] - vs[1]).distance;
-    final center = Offset((vs[0].dx + vs[1].dx) / 2, (vs[0].dy + vs[1].dy) / 2);
+    if (_pts.length >= 2 && _gsDist > 0) {
+      // ── Pinch-zoom + 2-finger pan ─────────────────────────────────
+      final vs     = _pts.values.toList();
+      final dist   = (vs[0] - vs[1]).distance;
+      final center = Offset((vs[0].dx + vs[1].dx) / 2, (vs[0].dy + vs[1].dy) / 2);
+      final newZoom = (_gsZoom * dist / _gsDist).clamp(1.0, 20.0);
+      final dx = center.dx - _gsCenter.dx;
+      _gsCenter = center;
+      final viewSpan   = _spanX / newZoom;
+      final maxPanData = (_spanX - viewSpan).clamp(0.0, double.infinity);
+      double newPanFrac = _panFrac;
+      if (maxPanData > 0 && chartW > 0) {
+        final dataPerPixel = viewSpan / chartW;
+        final newPanData   = (_panFrac * maxPanData - dx * dataPerPixel).clamp(0.0, maxPanData);
+        newPanFrac = newPanData / maxPanData;
+      }
+      setState(() { _zoom = newZoom; _panFrac = newPanFrac; });
 
-    // Zoom: stable ratio from gesture start
-    final newZoom = (_gsZoom * dist / _gsDist).clamp(1.0, 20.0);
+    } else if (_pts.length == 1 && _lastSinglePos != null) {
+      // ── Single-finger pan ─────────────────────────────────────────
+      final dx = e.localPosition.dx - _lastSinglePos!.dx;
+      final dy = e.localPosition.dy - _lastSinglePos!.dy;
+      _lastSinglePos = e.localPosition;
 
-    // Pan: incremental (delta of center since last event)
-    final dx = center.dx - _gsCenter.dx;
-    _gsCenter = center;
+      // X pan — only when zoomed in
+      if (_zoom > 1.01 && chartW > 0) {
+        final viewSpan   = _spanX / _zoom;
+        final maxPanData = (_spanX - viewSpan).clamp(0.0, double.infinity);
+        if (maxPanData > 0) {
+          final dataPerPixel = viewSpan / chartW;
+          final newPanData   = (_panFrac * maxPanData - dx * dataPerPixel).clamp(0.0, maxPanData);
+          _panFrac = newPanData / maxPanData;
+        }
+      }
 
-    final viewSpan   = _spanX / newZoom;
-    final maxPanData = (_spanX - viewSpan).clamp(0.0, double.infinity);
+      // Y pan — always (drag to scroll Y scale)
+      if (chartH > 0 && _lastYRange > 0) {
+        _yOffset -= dy * (_lastYRange / chartH);
+      }
 
-    double newPanFrac = _panFrac;
-    if (maxPanData > 0 && chartW > 0) {
-      final dataPerPixel  = viewSpan / chartW;
-      final curPanData    = _panFrac * maxPanData;
-      final newPanData    = (curPanData - dx * dataPerPixel).clamp(0.0, maxPanData);
-      newPanFrac = newPanData / maxPanData;
+      setState(() {});
     }
-
-    setState(() {
-      _zoom    = newZoom;
-      _panFrac = newPanFrac;
-    });
   }
 
-  void _pUp(PointerUpEvent e)         => _pts.remove(e.pointer);
-  void _pCancel(PointerCancelEvent e) => _pts.remove(e.pointer);
+  void _pUp(PointerUpEvent e) {
+    _pts.remove(e.pointer);
+    if (_pts.isEmpty) _lastSinglePos = null;
+  }
+  void _pCancel(PointerCancelEvent e) {
+    _pts.remove(e.pointer);
+    if (_pts.isEmpty) _lastSinglePos = null;
+  }
 
-  void _resetZoom() => setState(() { _zoom = 1.0; _panFrac = 0.0; });
+  void _resetZoom() => setState(() { _zoom = 1.0; _panFrac = 0.0; _yOffset = 0.0; });
 
   @override
   Widget build(BuildContext context) {
@@ -411,9 +437,10 @@ class _LineChartCardState extends State<_LineChartCard> {
     final rawMax = yVals.reduce((a, b) => a > b ? a : b);
     final rawAvg = yVals.reduce((a, b) => a + b) / yVals.length;
     final yPad   = ((rawMax - rawMin) * 0.12).clamp(0.5, double.infinity);
-    final yMin   = rawMin - yPad;
-    final yMax   = rawMax + yPad;
+    final yMin   = rawMin - yPad + _yOffset;
+    final yMax   = rawMax + yPad + _yOffset;
     final yRange = (yMax - yMin).clamp(0.1, double.infinity);
+    _lastYRange  = yRange;
 
     double niceInterval(double range, int ticks) {
       final raw  = range / ticks;
@@ -451,11 +478,11 @@ class _LineChartCardState extends State<_LineChartCard> {
           _StatBadge('AVG', widget.formatY(rawAvg), Colors.orange),
           const SizedBox(width: 6),
           _StatBadge('MAX', widget.formatY(rawMax), widget.lineColor),
-          // Reset zoom button (only when zoomed in)
-          if (_zoom > 1.01)
+          // Reset zoom/pan button
+          if (_zoom > 1.01 || _yOffset.abs() > 0.01)
             IconButton(
               icon: const Icon(Icons.zoom_out_map, size: 18),
-              tooltip: 'Reset zoom',
+              tooltip: 'Reset zoom & pan',
               padding: const EdgeInsets.symmetric(horizontal: 4),
               constraints: const BoxConstraints(),
               onPressed: _resetZoom,
@@ -481,20 +508,21 @@ class _LineChartCardState extends State<_LineChartCard> {
         child: Row(children: [
           Icon(Icons.pinch_outlined, size: 11, color: lblC),
           const SizedBox(width: 3),
-          Text('Pinch to zoom · tap for tooltip',
+          Text('Pinch to zoom · drag to pan · tap for tooltip',
               style: TextStyle(fontSize: 9, color: lblC)),
         ]),
       ),
       const Divider(height: 1),
 
-      // ── chart + Listener for pinch-zoom ─────────────────────────────
+      // ── chart + Listener for pinch-zoom + single-finger pan ─────────
       Expanded(child: LayoutBuilder(
         builder: (ctx, constraints) {
           final chartW = constraints.maxWidth;
+          final chartH = constraints.maxHeight;
           return Listener(
             behavior: HitTestBehavior.translucent,
             onPointerDown:   _pDown,
-            onPointerMove:   (e) => _pMove(e, chartW),
+            onPointerMove:   (e) => _pMove(e, chartW, chartH),
             onPointerUp:     _pUp,
             onPointerCancel: _pCancel,
             child: Padding(
@@ -658,17 +686,23 @@ class _AccelChart extends StatefulWidget {
 class _AccelChartState extends State<_AccelChart> {
   double _zoom    = 1.0;
   double _panFrac = 0.0;
+  double _yOffset = 0.0;
   double _spanX   = 1.0;
   double _minX0   = 0.0;
+  double _lastYRange = 1.0;
 
   final _pts = <int, Offset>{};
-  double _gsZoom   = 1.0;
-  double _gsDist   = 0.0;
-  Offset _gsCenter = Offset.zero;
+  double  _gsZoom      = 1.0;
+  double  _gsDist      = 0.0;
+  Offset  _gsCenter    = Offset.zero;
+  Offset? _lastSinglePos;
 
   void _pDown(PointerDownEvent e) {
     _pts[e.pointer] = e.localPosition;
-    if (_pts.length == 2) {
+    if (_pts.length == 1) {
+      _lastSinglePos = e.localPosition;
+    } else if (_pts.length == 2) {
+      _lastSinglePos = null;
       final vs = _pts.values.toList();
       _gsDist   = (vs[0] - vs[1]).distance;
       _gsZoom   = _zoom;
@@ -676,28 +710,54 @@ class _AccelChartState extends State<_AccelChart> {
     }
   }
 
-  void _pMove(PointerMoveEvent e, double chartW) {
+  void _pMove(PointerMoveEvent e, double chartW, double chartH) {
     _pts[e.pointer] = e.localPosition;
-    if (_pts.length < 2 || _gsDist <= 0) return;
-    final vs     = _pts.values.toList();
-    final dist   = (vs[0] - vs[1]).distance;
-    final center = Offset((vs[0].dx + vs[1].dx) / 2, (vs[0].dy + vs[1].dy) / 2);
-    final newZoom = (_gsZoom * dist / _gsDist).clamp(1.0, 20.0);
-    final dx = center.dx - _gsCenter.dx;
-    _gsCenter = center;
-    final viewSpan   = _spanX / newZoom;
-    final maxPanData = (_spanX - viewSpan).clamp(0.0, double.infinity);
-    double newPanFrac = _panFrac;
-    if (maxPanData > 0 && chartW > 0) {
-      final dataPerPixel = viewSpan / chartW;
-      final newPanData = (_panFrac * maxPanData - dx * dataPerPixel).clamp(0.0, maxPanData);
-      newPanFrac = newPanData / maxPanData;
+
+    if (_pts.length >= 2 && _gsDist > 0) {
+      final vs     = _pts.values.toList();
+      final dist   = (vs[0] - vs[1]).distance;
+      final center = Offset((vs[0].dx + vs[1].dx) / 2, (vs[0].dy + vs[1].dy) / 2);
+      final newZoom = (_gsZoom * dist / _gsDist).clamp(1.0, 20.0);
+      final dx = center.dx - _gsCenter.dx;
+      _gsCenter = center;
+      final viewSpan   = _spanX / newZoom;
+      final maxPanData = (_spanX - viewSpan).clamp(0.0, double.infinity);
+      double newPanFrac = _panFrac;
+      if (maxPanData > 0 && chartW > 0) {
+        final dataPerPixel = viewSpan / chartW;
+        final newPanData = (_panFrac * maxPanData - dx * dataPerPixel).clamp(0.0, maxPanData);
+        newPanFrac = newPanData / maxPanData;
+      }
+      setState(() { _zoom = newZoom; _panFrac = newPanFrac; });
+
+    } else if (_pts.length == 1 && _lastSinglePos != null) {
+      final dx = e.localPosition.dx - _lastSinglePos!.dx;
+      final dy = e.localPosition.dy - _lastSinglePos!.dy;
+      _lastSinglePos = e.localPosition;
+      if (_zoom > 1.01 && chartW > 0) {
+        final viewSpan   = _spanX / _zoom;
+        final maxPanData = (_spanX - viewSpan).clamp(0.0, double.infinity);
+        if (maxPanData > 0) {
+          final dataPerPixel = viewSpan / chartW;
+          final newPanData = (_panFrac * maxPanData - dx * dataPerPixel).clamp(0.0, maxPanData);
+          _panFrac = newPanData / maxPanData;
+        }
+      }
+      if (chartH > 0 && _lastYRange > 0) {
+        _yOffset -= dy * (_lastYRange / chartH);
+      }
+      setState(() {});
     }
-    setState(() { _zoom = newZoom; _panFrac = newPanFrac; });
   }
 
-  void _pUp(PointerUpEvent e)         => _pts.remove(e.pointer);
-  void _pCancel(PointerCancelEvent e) => _pts.remove(e.pointer);
+  void _pUp(PointerUpEvent e) {
+    _pts.remove(e.pointer);
+    if (_pts.isEmpty) _lastSinglePos = null;
+  }
+  void _pCancel(PointerCancelEvent e) {
+    _pts.remove(e.pointer);
+    if (_pts.isEmpty) _lastSinglePos = null;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -743,6 +803,7 @@ class _AccelChartState extends State<_AccelChart> {
     final rawYMin = allPts.map((p) => p.value).reduce((a, b) => a < b ? a : b);
     final rawYMax = allPts.map((p) => p.value).reduce((a, b) => a > b ? a : b);
     final yPad    = ((rawYMax - rawYMin) * 0.12).clamp(0.05, double.infinity);
+    _lastYRange   = (rawYMax - rawYMin + 2 * yPad).clamp(0.01, double.infinity);
 
     FlSpot toSpot(ChartPoint p) =>
         FlSpot(p.ts.millisecondsSinceEpoch / 1000.0, p.value);
@@ -755,13 +816,13 @@ class _AccelChartState extends State<_AccelChart> {
               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
           Text('  (g)', style: TextStyle(fontSize: 12, color: lblC)),
           const Spacer(),
-          if (_zoom > 1.01)
+          if (_zoom > 1.01 || _yOffset.abs() > 0.001)
             IconButton(
               icon: const Icon(Icons.zoom_out_map, size: 18),
-              tooltip: 'Reset zoom',
+              tooltip: 'Reset zoom & pan',
               padding: const EdgeInsets.symmetric(horizontal: 4),
               constraints: const BoxConstraints(),
-              onPressed: () => setState(() { _zoom = 1.0; _panFrac = 0.0; }),
+              onPressed: () => setState(() { _zoom = 1.0; _panFrac = 0.0; _yOffset = 0.0; }),
             ),
           _Legend('X', const Color(0xFFF44336)),
           const SizedBox(width: 8),
@@ -775,7 +836,7 @@ class _AccelChartState extends State<_AccelChart> {
         child: Row(children: [
           Icon(Icons.pinch_outlined, size: 11, color: lblC),
           const SizedBox(width: 3),
-          Text('Pinch to zoom · tap for tooltip',
+          Text('Pinch to zoom · drag to pan · tap for tooltip',
               style: TextStyle(fontSize: 9, color: lblC)),
         ]),
       ),
@@ -783,17 +844,18 @@ class _AccelChartState extends State<_AccelChart> {
       Expanded(child: LayoutBuilder(
         builder: (ctx, constraints) {
           final chartW = constraints.maxWidth;
+          final chartH = constraints.maxHeight;
           return Listener(
             behavior: HitTestBehavior.translucent,
             onPointerDown:   _pDown,
-            onPointerMove:   (e) => _pMove(e, chartW),
+            onPointerMove:   (e) => _pMove(e, chartW, chartH),
             onPointerUp:     _pUp,
             onPointerCancel: _pCancel,
             child: Padding(
               padding: const EdgeInsets.fromLTRB(4, 12, 16, 8),
               child: LineChart(LineChartData(
                 minX: minX, maxX: maxX,
-                minY: rawYMin - yPad, maxY: rawYMax + yPad,
+                minY: rawYMin - yPad + _yOffset, maxY: rawYMax + yPad + _yOffset,
                 clipData: const FlClipData.all(),
                 gridData: FlGridData(
                   show: true,
