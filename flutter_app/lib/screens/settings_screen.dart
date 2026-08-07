@@ -133,7 +133,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               const Divider(height: 1),
               SwitchListTile(
                 title: const Text('Scan continuously'),
-                subtitle: const Text('Re-scan every 20 s to keep nearby beacons visible'),
+                subtitle: const Text('Continuously scan and auto-connect to known beacons'),
                 secondary: const Icon(Icons.radar),
                 value: app.continuousScan,
                 onChanged: app.setContinuousScan,

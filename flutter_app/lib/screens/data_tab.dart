@@ -15,7 +15,8 @@ class DataTab extends StatefulWidget {
 }
 
 class _DataTabState extends State<DataTab> {
-  int _chartIndex = 0;
+  int  _chartIndex = 0;
+  bool _smoothLine = true;
 
   static const _chartLabels = ['Temperature', 'Battery', 'Light', 'Accel'];
   static const _chartIcons  = [
@@ -116,21 +117,34 @@ class _DataTabState extends State<DataTab> {
 
           const Divider(height: 12),
 
-          // ── Chart selector chips ──────────────────────────────────────
+          // ── Chart selector chips + smooth toggle ──────────────────────
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12),
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(
-                children: List.generate(_chartLabels.length, (i) => Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: FilterChip(
-                    avatar: Icon(_chartIcons[i], size: 14),
-                    label: Text(_chartLabels[i]),
-                    selected: _chartIndex == i,
-                    onSelected: (_) => setState(() => _chartIndex = i),
-                  ),
-                )),
+                children: [
+                  ...List.generate(_chartLabels.length, (i) => Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: FilterChip(
+                      avatar: Icon(_chartIcons[i], size: 14),
+                      label: Text(_chartLabels[i]),
+                      selected: _chartIndex == i,
+                      onSelected: (_) => setState(() => _chartIndex = i),
+                    ),
+                  )),
+                  // Smooth / Raw toggle (hidden for accel chart)
+                  if (_chartIndex != 3)
+                    FilterChip(
+                      avatar: Icon(
+                        _smoothLine ? Icons.gesture : Icons.show_chart,
+                        size: 14,
+                      ),
+                      label: Text(_smoothLine ? 'Smooth' : 'Raw'),
+                      selected: _smoothLine,
+                      onSelected: (_) => setState(() => _smoothLine = !_smoothLine),
+                    ),
+                ],
               ),
             ),
           ),
@@ -162,7 +176,7 @@ class _DataTabState extends State<DataTab> {
                     transitionBuilder: (child, animation) =>
                         FadeTransition(opacity: animation, child: child),
                     child: KeyedSubtree(
-                      key: ValueKey(_chartIndex),
+                      key: ValueKey('$_chartIndex/$_smoothLine'),
                       child: _buildChart(context, beacon, _chartIndex),
                     ),
                   ),
@@ -180,6 +194,7 @@ class _DataTabState extends State<DataTab> {
         points: beacon.logTempHistory,
         lineColor: const Color(0xFFEF5350),
         formatY: (v) => v.toStringAsFixed(1),
+        smoothLine: _smoothLine,
       );
       case 1: return _LineChartCard(
         title: 'Battery',
@@ -187,6 +202,7 @@ class _DataTabState extends State<DataTab> {
         points: beacon.logBatHistory,
         lineColor: const Color(0xFF66BB6A),
         formatY: (v) => v.round().toString(),
+        smoothLine: _smoothLine,
       );
       case 2: return _LineChartCard(
         title: 'Light',
@@ -194,6 +210,7 @@ class _DataTabState extends State<DataTab> {
         points: beacon.logLightHistory,
         lineColor: const Color(0xFFFFCA28),
         formatY: (v) => v.round().toString(),
+        smoothLine: _smoothLine,
       );
       case 3: return _AccelChart(beacon: beacon);
       default: return const SizedBox.shrink();
@@ -263,15 +280,16 @@ class _DataTabState extends State<DataTab> {
   }
 }
 
-// ── Line chart card ────────────────────────────────────────────────────────
+// ── Line chart card (stateful for pinch-zoom) ──────────────────────────────
 
-class _LineChartCard extends StatelessWidget {
+class _LineChartCard extends StatefulWidget {
   final String title;
   final String unit;
   final List<ChartPoint> points;
   final Color lineColor;
   final String Function(double) formatY;
   final bool fullscreen;
+  final bool smoothLine;
 
   const _LineChartCard({
     required this.title,
@@ -280,11 +298,25 @@ class _LineChartCard extends StatelessWidget {
     required this.lineColor,
     required this.formatY,
     this.fullscreen = false,
+    this.smoothLine = true,
   });
 
   @override
+  State<_LineChartCard> createState() => _LineChartCardState();
+}
+
+class _LineChartCardState extends State<_LineChartCard> {
+  final _transform = TransformationController();
+
+  @override
+  void dispose() {
+    _transform.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    if (points.isEmpty) {
+    if (widget.points.isEmpty) {
       return Center(child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
@@ -304,11 +336,10 @@ class _LineChartCard extends StatelessWidget {
     final axisC  = isDark ? Colors.white24 : Colors.black26;
     final lblC   = isDark ? Colors.white54 : Colors.black45;
 
-    final spots = _toSpots(points);
+    final spots = _toSpots(widget.points);
     final dataMinX = spots.first.x;
     final dataMaxX = spots.last.x;
     final spanX  = (dataMaxX - dataMinX).clamp(1.0, double.infinity);
-    // 5% margin on each side so edge dots are not clipped by clipData
     final edgeX  = spots.length == 1 ? spanX * 0.5 : spanX * 0.05;
     final minX   = dataMinX - edgeX;
     final maxX   = dataMaxX + edgeX;
@@ -317,14 +348,12 @@ class _LineChartCard extends StatelessWidget {
     final rawMin = yVals.reduce((a, b) => a < b ? a : b);
     final rawMax = yVals.reduce((a, b) => a > b ? a : b);
     final rawAvg = yVals.reduce((a, b) => a + b) / yVals.length;
-    // clamp upper bound raised: large-range values (e.g. battery mV) need more room
     final yPad   = ((rawMax - rawMin) * 0.12).clamp(0.5, double.infinity);
     final yMin   = rawMin - yPad;
     final yMax   = rawMax + yPad;
     final yRange = (yMax - yMin).clamp(0.1, double.infinity);
 
-    // nice round interval for Y grid
-    double _niceInterval(double range, int ticks) {
+    double niceInterval(double range, int ticks) {
       final raw = range / ticks;
       final mag = (raw == 0) ? 1.0 : pow(10, (log(raw) / ln10).floor()).toDouble();
       final norm = raw / mag;
@@ -333,13 +362,11 @@ class _LineChartCard extends StatelessWidget {
       if (norm <= 5) return 5 * mag;
       return 10 * mag;
     }
-    final yInterval = _niceInterval(yRange, 5);
-
-    // X interval
-    final xInterval = _niceInterval(spanX, 4);
+    final yInterval = niceInterval(yRange, 5);
+    final xInterval = niceInterval(spanX, 4);
     final spanH = spanX / 3600;
 
-    String _xLabel(double v) {
+    String xLabel(double v) {
       final dt = DateTime.fromMillisecondsSinceEpoch(v.toInt() * 1000).toLocal();
       if (spanH > 24) {
         return '${dt.day.toString().padLeft(2,'0')}/${dt.month.toString().padLeft(2,'0')}\n'
@@ -348,22 +375,135 @@ class _LineChartCard extends StatelessWidget {
       return '${dt.hour.toString().padLeft(2,'0')}:${dt.minute.toString().padLeft(2,'0')}';
     }
 
+    final chartData = LineChartData(
+      minX: minX, maxX: maxX,
+      minY: yMin,  maxY: yMax,
+      clipData: const FlClipData.all(),
+      gridData: FlGridData(
+        show: true,
+        drawHorizontalLine: true,
+        drawVerticalLine: true,
+        horizontalInterval: yInterval,
+        verticalInterval: xInterval,
+        getDrawingHorizontalLine: (_) => FlLine(color: gridC, strokeWidth: 1),
+        getDrawingVerticalLine: (_) =>
+            FlLine(color: gridC, strokeWidth: 1, dashArray: [4, 4]),
+      ),
+      borderData: FlBorderData(
+        show: true,
+        border: Border(
+          left:   BorderSide(color: axisC, width: 1),
+          bottom: BorderSide(color: axisC, width: 1),
+          right:  BorderSide(color: Colors.transparent),
+          top:    BorderSide(color: Colors.transparent),
+        ),
+      ),
+      titlesData: FlTitlesData(
+        leftTitles: AxisTitles(
+          sideTitles: SideTitles(
+            showTitles: true,
+            reservedSize: 52,
+            interval: yInterval,
+            getTitlesWidget: (v, meta) {
+              if (v == meta.min || v == meta.max) return const SizedBox.shrink();
+              return Padding(
+                padding: const EdgeInsets.only(right: 6),
+                child: Text(widget.formatY(v),
+                    textAlign: TextAlign.right,
+                    style: TextStyle(fontSize: 10, color: lblC)),
+              );
+            },
+          ),
+        ),
+        bottomTitles: AxisTitles(
+          sideTitles: SideTitles(
+            showTitles: true,
+            reservedSize: spanH > 24 ? 36 : 22,
+            interval: xInterval,
+            getTitlesWidget: (v, meta) {
+              if (v == meta.min || v == meta.max) return const SizedBox.shrink();
+              return Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(xLabel(v),
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 9, color: lblC)),
+              );
+            },
+          ),
+        ),
+        rightTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false, reservedSize: 8)),
+        topTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false, reservedSize: 8)),
+      ),
+      lineBarsData: [
+        LineChartBarData(
+          spots: spots,
+          color: widget.lineColor,
+          barWidth: 2.0,
+          isCurved: widget.smoothLine,
+          curveSmoothness: widget.smoothLine ? 0.35 : 0.0,
+          dotData: FlDotData(show: spots.length <= 40,
+              getDotPainter: (_, __, ___, ____) =>
+                  FlDotCirclePainter(
+                      radius: 2.5,
+                      color: widget.lineColor,
+                      strokeWidth: 1.5,
+                      strokeColor: Colors.white.withValues(alpha: 0.6))),
+          belowBarData: BarAreaData(
+            show: true,
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                widget.lineColor.withValues(alpha: 0.30),
+                widget.lineColor.withValues(alpha: 0.0),
+              ],
+            ),
+          ),
+        ),
+      ],
+      lineTouchData: LineTouchData(
+        handleBuiltInTouches: true,
+        touchTooltipData: LineTouchTooltipData(
+          tooltipRoundedRadius: 8,
+          getTooltipItems: (touchedSpots) =>
+              touchedSpots.map((s) {
+                final dt = DateTime.fromMillisecondsSinceEpoch(
+                    s.x.toInt() * 1000).toLocal();
+                final time =
+                    '${dt.hour.toString().padLeft(2,'0')}:'
+                    '${dt.minute.toString().padLeft(2,'0')}:'
+                    '${dt.second.toString().padLeft(2,'0')}';
+                return LineTooltipItem(
+                  '${widget.formatY(s.y)} ${widget.unit}\n$time',
+                  TextStyle(
+                    color: theme.colorScheme.onSurface,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                );
+              }).toList(),
+        ),
+      ),
+    );
+
     return Column(children: [
       // ── header: title + unit + stats ────────────────────────────────
       Padding(
         padding: const EdgeInsets.fromLTRB(12, 6, 4, 6),
         child: Row(children: [
-          Text(title,
+          Text(widget.title,
               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-          Text('  ($unit)',
+          Text('  (${widget.unit})',
               style: TextStyle(fontSize: 12, color: lblC)),
           const Spacer(),
-          _StatBadge('MIN', formatY(rawMin), Colors.blueAccent),
+          _StatBadge('MIN', widget.formatY(rawMin), Colors.blueAccent),
           const SizedBox(width: 6),
-          _StatBadge('AVG', formatY(rawAvg), Colors.orange),
+          _StatBadge('AVG', widget.formatY(rawAvg), Colors.orange),
           const SizedBox(width: 6),
-          _StatBadge('MAX', formatY(rawMax), lineColor),
-          if (!fullscreen)
+          _StatBadge('MAX', widget.formatY(rawMax), widget.lineColor),
+          if (!widget.fullscreen)
             Builder(builder: (ctx) => IconButton(
               icon: const Icon(Icons.fullscreen, size: 20),
               tooltip: 'Fullscreen',
@@ -371,134 +511,27 @@ class _LineChartCard extends StatelessWidget {
               constraints: const BoxConstraints(),
               onPressed: () => Navigator.push(ctx, MaterialPageRoute(
                 builder: (_) => _FullscreenChartScreen(
-                  title: title, unit: unit, points: points,
-                  lineColor: lineColor, formatY: formatY,
+                  title: widget.title, unit: widget.unit, points: widget.points,
+                  lineColor: widget.lineColor, formatY: widget.formatY,
+                  smoothLine: widget.smoothLine,
                 ),
               )),
             )),
         ]),
       ),
       const Divider(height: 1),
-      // ── chart ────────────────────────────────────────────────────────
+      // ── chart (pinch-to-zoom; double-tap to reset) ───────────────────
       Expanded(child: Padding(
         padding: const EdgeInsets.fromLTRB(4, 12, 16, 8),
-        child: LineChart(
-          LineChartData(
-            minX: minX, maxX: maxX,
-            minY: yMin,  maxY: yMax,
-            clipData: const FlClipData.all(),
-            gridData: FlGridData(
-              show: true,
-              drawHorizontalLine: true,
-              drawVerticalLine: true,
-              horizontalInterval: yInterval,
-              verticalInterval: xInterval,
-              getDrawingHorizontalLine: (_) =>
-                  FlLine(color: gridC, strokeWidth: 1),
-              getDrawingVerticalLine: (_) =>
-                  FlLine(color: gridC, strokeWidth: 1, dashArray: [4, 4]),
-            ),
-            borderData: FlBorderData(
-              show: true,
-              border: Border(
-                left:   BorderSide(color: axisC, width: 1),
-                bottom: BorderSide(color: axisC, width: 1),
-                right:  BorderSide(color: Colors.transparent),
-                top:    BorderSide(color: Colors.transparent),
-              ),
-            ),
-            titlesData: FlTitlesData(
-              leftTitles: AxisTitles(
-                sideTitles: SideTitles(
-                  showTitles: true,
-                  reservedSize: 52,
-                  interval: yInterval,
-                  getTitlesWidget: (v, meta) {
-                    if (v == meta.min || v == meta.max) {
-                      return const SizedBox.shrink();
-                    }
-                    return Padding(
-                      padding: const EdgeInsets.only(right: 6),
-                      child: Text(formatY(v),
-                          textAlign: TextAlign.right,
-                          style: TextStyle(fontSize: 10, color: lblC)),
-                    );
-                  },
-                ),
-              ),
-              bottomTitles: AxisTitles(
-                sideTitles: SideTitles(
-                  showTitles: true,
-                  reservedSize: spanH > 24 ? 36 : 22,
-                  interval: xInterval,
-                  getTitlesWidget: (v, meta) {
-                    if (v == meta.min || v == meta.max) {
-                      return const SizedBox.shrink();
-                    }
-                    return Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text(_xLabel(v),
-                          textAlign: TextAlign.center,
-                          style: TextStyle(fontSize: 9, color: lblC)),
-                    );
-                  },
-                ),
-              ),
-              rightTitles: const AxisTitles(
-                  sideTitles: SideTitles(showTitles: false, reservedSize: 8)),
-              topTitles: const AxisTitles(
-                  sideTitles: SideTitles(showTitles: false, reservedSize: 8)),
-            ),
-            lineBarsData: [
-              LineChartBarData(
-                spots: spots,
-                color: lineColor,
-                barWidth: 2.0,
-                isCurved: spots.length > 10,
-                curveSmoothness: 0.15,
-                dotData: FlDotData(show: spots.length <= 40,
-                    getDotPainter: (_, __, ___, ____) =>
-                        FlDotCirclePainter(
-                            radius: 2.5,
-                            color: lineColor,
-                            strokeWidth: 1.5,
-                            strokeColor: Colors.white.withValues(alpha: 0.6))),
-                belowBarData: BarAreaData(
-                  show: true,
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      lineColor.withValues(alpha: 0.30),
-                      lineColor.withValues(alpha: 0.0),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-            lineTouchData: LineTouchData(
-              handleBuiltInTouches: true,
-              touchTooltipData: LineTouchTooltipData(
-                tooltipRoundedRadius: 8,
-                getTooltipItems: (touchedSpots) =>
-                    touchedSpots.map((s) {
-                      final dt = DateTime.fromMillisecondsSinceEpoch(
-                          s.x.toInt() * 1000).toLocal();
-                      final time =
-                          '${dt.hour.toString().padLeft(2,'0')}:'
-                          '${dt.minute.toString().padLeft(2,'0')}:'
-                          '${dt.second.toString().padLeft(2,'0')}';
-                      return LineTooltipItem(
-                        '${formatY(s.y)} $unit\n$time',
-                        TextStyle(
-                          color: theme.colorScheme.onSurface,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      );
-                    }).toList(),
-              ),
-            ),
+        child: GestureDetector(
+          onDoubleTap: () => _transform.value = Matrix4.identity(),
+          child: InteractiveViewer(
+            transformationController: _transform,
+            clipBehavior: Clip.hardEdge,
+            boundaryMargin: const EdgeInsets.symmetric(vertical: 20, horizontal: 0),
+            minScale: 1.0,
+            maxScale: 15.0,
+            child: LineChart(chartData),
           ),
         ),
       )),
@@ -534,14 +567,27 @@ class _StatBadge extends StatelessWidget {
   );
 }
 
-// ── Accel chart (3 lines: X, Y, Z) ────────────────────────────────────────
+// ── Accel chart (3 lines: X, Y, Z) with pinch-zoom ───────────────────────
 
-class _AccelChart extends StatelessWidget {
+class _AccelChart extends StatefulWidget {
   final BeaconProvider beacon;
   const _AccelChart({required this.beacon});
+  @override
+  State<_AccelChart> createState() => _AccelChartState();
+}
+
+class _AccelChartState extends State<_AccelChart> {
+  final _transform = TransformationController();
+
+  @override
+  void dispose() {
+    _transform.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
+    final beacon = widget.beacon;
     final hasData = beacon.logAccelXHistory.isNotEmpty ||
         beacon.logAccelYHistory.isNotEmpty || beacon.logAccelZHistory.isNotEmpty;
 
@@ -582,7 +628,6 @@ class _AccelChart extends StatelessWidget {
         FlSpot(p.ts.millisecondsSinceEpoch / 1000.0, p.value);
 
     return Column(children: [
-      // header
       Padding(
         padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
         child: Row(children: [
@@ -600,64 +645,74 @@ class _AccelChart extends StatelessWidget {
       const Divider(height: 1),
       Expanded(child: Padding(
         padding: const EdgeInsets.fromLTRB(4, 12, 16, 8),
-        child: LineChart(LineChartData(
-          minX: minX, maxX: maxX,
-          minY: minY, maxY: maxY,
-          clipData: const FlClipData.all(),
-          gridData: FlGridData(
-            show: true,
-            getDrawingHorizontalLine: (_) => FlLine(color: gridC, strokeWidth: 1),
-            getDrawingVerticalLine:   (_) => FlLine(color: gridC, strokeWidth: 1, dashArray: [4, 4]),
-          ),
-          borderData: FlBorderData(
-            show: true,
-            border: Border(
-              left:   BorderSide(color: axisC, width: 1),
-              bottom: BorderSide(color: axisC, width: 1),
-              right:  BorderSide.none,
-              top:    BorderSide.none,
-            ),
-          ),
-          titlesData: FlTitlesData(
-            leftTitles: AxisTitles(sideTitles: SideTitles(
-              showTitles: true, reservedSize: 44,
-              getTitlesWidget: (v, meta) {
-                if (v == meta.min || v == meta.max) return const SizedBox.shrink();
-                return Padding(
-                  padding: const EdgeInsets.only(right: 6),
-                  child: Text(v.toStringAsFixed(2),
-                      textAlign: TextAlign.right,
-                      style: TextStyle(fontSize: 10, color: lblC)),
-                );
-              },
+        child: GestureDetector(
+          onDoubleTap: () => _transform.value = Matrix4.identity(),
+          child: InteractiveViewer(
+            transformationController: _transform,
+            clipBehavior: Clip.hardEdge,
+            boundaryMargin: const EdgeInsets.symmetric(vertical: 20, horizontal: 0),
+            minScale: 1.0,
+            maxScale: 15.0,
+            child: LineChart(LineChartData(
+              minX: minX, maxX: maxX,
+              minY: minY, maxY: maxY,
+              clipData: const FlClipData.all(),
+              gridData: FlGridData(
+                show: true,
+                getDrawingHorizontalLine: (_) => FlLine(color: gridC, strokeWidth: 1),
+                getDrawingVerticalLine:   (_) => FlLine(color: gridC, strokeWidth: 1, dashArray: [4, 4]),
+              ),
+              borderData: FlBorderData(
+                show: true,
+                border: Border(
+                  left:   BorderSide(color: axisC, width: 1),
+                  bottom: BorderSide(color: axisC, width: 1),
+                  right:  BorderSide.none,
+                  top:    BorderSide.none,
+                ),
+              ),
+              titlesData: FlTitlesData(
+                leftTitles: AxisTitles(sideTitles: SideTitles(
+                  showTitles: true, reservedSize: 44,
+                  getTitlesWidget: (v, meta) {
+                    if (v == meta.min || v == meta.max) return const SizedBox.shrink();
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: Text(v.toStringAsFixed(2),
+                          textAlign: TextAlign.right,
+                          style: TextStyle(fontSize: 10, color: lblC)),
+                    );
+                  },
+                )),
+                bottomTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false, reservedSize: 8)),
+                rightTitles:  const AxisTitles(sideTitles: SideTitles(showTitles: false, reservedSize: 8)),
+                topTitles:    const AxisTitles(sideTitles: SideTitles(showTitles: false, reservedSize: 8)),
+              ),
+              lineBarsData: [
+                if (beacon.logAccelXHistory.isNotEmpty)
+                  _accelBar(beacon.logAccelXHistory.map(toSpot).toList(), const Color(0xFFF44336)),
+                if (beacon.logAccelYHistory.isNotEmpty)
+                  _accelBar(beacon.logAccelYHistory.map(toSpot).toList(), const Color(0xFF4CAF50)),
+                if (beacon.logAccelZHistory.isNotEmpty)
+                  _accelBar(beacon.logAccelZHistory.map(toSpot).toList(), const Color(0xFF2196F3)),
+              ],
+              lineTouchData: LineTouchData(
+                touchTooltipData: LineTouchTooltipData(
+                  tooltipRoundedRadius: 8,
+                  getTooltipItems: (spots) => spots.map((s) {
+                    final labels = ['X', 'Y', 'Z'];
+                    final colors = [const Color(0xFFF44336), const Color(0xFF4CAF50), const Color(0xFF2196F3)];
+                    final i = s.barIndex.clamp(0, 2);
+                    return LineTooltipItem(
+                      '${labels[i]}: ${s.y.toStringAsFixed(3)} g',
+                      TextStyle(color: colors[i], fontSize: 12, fontWeight: FontWeight.bold),
+                    );
+                  }).toList(),
+                ),
+              ),
             )),
-            bottomTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false, reservedSize: 8)),
-            rightTitles:  const AxisTitles(sideTitles: SideTitles(showTitles: false, reservedSize: 8)),
-            topTitles:    const AxisTitles(sideTitles: SideTitles(showTitles: false, reservedSize: 8)),
           ),
-          lineBarsData: [
-            if (beacon.logAccelXHistory.isNotEmpty)
-              _accelBar(beacon.logAccelXHistory.map(toSpot).toList(), const Color(0xFFF44336)),
-            if (beacon.logAccelYHistory.isNotEmpty)
-              _accelBar(beacon.logAccelYHistory.map(toSpot).toList(), const Color(0xFF4CAF50)),
-            if (beacon.logAccelZHistory.isNotEmpty)
-              _accelBar(beacon.logAccelZHistory.map(toSpot).toList(), const Color(0xFF2196F3)),
-          ],
-          lineTouchData: LineTouchData(
-            touchTooltipData: LineTouchTooltipData(
-              tooltipRoundedRadius: 8,
-              getTooltipItems: (spots) => spots.map((s) {
-                final labels = ['X', 'Y', 'Z'];
-                final colors = [const Color(0xFFF44336), const Color(0xFF4CAF50), const Color(0xFF2196F3)];
-                final i = s.barIndex.clamp(0, 2);
-                return LineTooltipItem(
-                  '${labels[i]}: ${s.y.toStringAsFixed(3)} g',
-                  TextStyle(color: colors[i], fontSize: 12, fontWeight: FontWeight.bold),
-                );
-              }).toList(),
-            ),
-          ),
-        )),
+        ),
       )),
     ]);
   }
@@ -690,6 +745,7 @@ class _FullscreenChartScreen extends StatelessWidget {
   final List<ChartPoint> points;
   final Color lineColor;
   final String Function(double) formatY;
+  final bool smoothLine;
 
   const _FullscreenChartScreen({
     required this.title,
@@ -697,6 +753,7 @@ class _FullscreenChartScreen extends StatelessWidget {
     required this.points,
     required this.lineColor,
     required this.formatY,
+    this.smoothLine = true,
   });
 
   @override
@@ -720,6 +777,7 @@ class _FullscreenChartScreen extends StatelessWidget {
           lineColor: lineColor,
           formatY: formatY,
           fullscreen: true,
+          smoothLine: smoothLine,
         ),
       ),
     );

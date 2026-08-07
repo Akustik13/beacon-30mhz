@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:vibration/vibration.dart';
 import '../transport/nus_ble_transport.dart';
 
 class ScannedDevice {
@@ -28,6 +28,9 @@ class BleProvider extends ChangeNotifier {
   StreamSubscription? _scanSub;
   StreamSubscription? _connSub;
   Timer? _rssiTimer;
+
+  // ── Callback invoked before every scan to refresh known-device MACs ───────
+  VoidCallback? onBeforeScan;
 
   // ── Auto-connect on scan ─────────────────────────────────────────────────
   Set<String> _autoConnectMacs  = {};
@@ -62,7 +65,7 @@ class BleProvider extends ChangeNotifier {
 
   Future<void> _kickAutoScan() async {
     if (!_autoScanEnabled || _isConnected || _isScanning) return;
-    await startScan(timeoutSec: 12);
+    await startScan(timeoutSec: 5);
   }
 
   // ── Auto-disconnect ───────────────────────────────────────────────────────
@@ -94,6 +97,7 @@ class BleProvider extends ChangeNotifier {
 
   Future<void> startScan({int timeoutSec = 8}) async {
     if (_isScanning) return;
+    onBeforeScan?.call(); // refresh known MACs before each scan
     _scanResults.clear();
     _isScanning = true;
     _statusMsg = 'Scanning…';
@@ -118,7 +122,8 @@ class BleProvider extends ChangeNotifier {
               _autoConnectFired = true;
               Timer.run(() async {
                 await stopScan();
-                await connect(d.device, d.name);
+                final ok = await connect(d.device, d.name);
+                if (!ok) _autoConnectFired = false; // allow retry on next scan
               });
               break;
             }
@@ -140,7 +145,7 @@ class BleProvider extends ChangeNotifier {
     notifyListeners();
     if (_autoScanEnabled && !_isConnected) {
       _autoScanRestartTimer?.cancel();
-      _autoScanRestartTimer = Timer(const Duration(seconds: 2), _kickAutoScan);
+      _autoScanRestartTimer = Timer(const Duration(milliseconds: 300), _kickAutoScan);
     }
   }
 
@@ -171,7 +176,7 @@ class BleProvider extends ChangeNotifier {
     _connectedName  = name;
     _isConnected    = true;
     _statusMsg      = 'Connected: $name';
-    HapticFeedback.mediumImpact();
+    Vibration.vibrate(duration: 350); // single pulse on connect
     notifyListeners();
 
     // Watch for remote disconnect
@@ -203,10 +208,11 @@ class BleProvider extends ChangeNotifier {
     _isConnected = false;
     _rssi = 0;
     _statusMsg = 'Disconnected';
+    Vibration.vibrate(pattern: [0, 120, 100, 120]); // two short pulses on loss
     notifyListeners();
     if (_autoScanEnabled) {
       _autoScanRestartTimer?.cancel();
-      _autoScanRestartTimer = Timer(const Duration(seconds: 2), _kickAutoScan);
+      _autoScanRestartTimer = Timer(const Duration(seconds: 1), _kickAutoScan);
     }
   }
 
@@ -225,7 +231,7 @@ class BleProvider extends ChangeNotifier {
     notifyListeners();
     if (_autoScanEnabled) {
       _autoScanRestartTimer?.cancel();
-      _autoScanRestartTimer = Timer(const Duration(seconds: 2), _kickAutoScan);
+      _autoScanRestartTimer = Timer(const Duration(seconds: 1), _kickAutoScan);
     }
   }
 

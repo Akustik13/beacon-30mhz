@@ -22,7 +22,7 @@ class MainScreen extends StatefulWidget {
 }
 
 class _MainScreenState extends State<MainScreen> {
-  Timer? _continuousScanTimer;
+  bool   _continuousScanRunning  = false;
   bool   _autoConnectInProgress  = false;
   bool   _disconnectDialogShown  = false;
 
@@ -34,7 +34,7 @@ class _MainScreenState extends State<MainScreen> {
 
   @override
   void dispose() {
-    _continuousScanTimer?.cancel();
+    _continuousScanRunning = false;
     super.dispose();
   }
 
@@ -42,35 +42,54 @@ class _MainScreenState extends State<MainScreen> {
     if (!mounted) return;
     final ble  = context.read<BleProvider>();
     final app  = context.read<AppProvider>();
-    final devs = context.read<DevicesProvider>();
-    if (ble.isConnected || ble.isScanning) return;
-    if (app.autoConnect && devs.devices.isNotEmpty) {
-      ble.setAutoConnectMacs(devs.devices.map((d) => d.mac).toSet());
+
+    // Register callback so every scan refreshes known-device MACs for auto-connect
+    ble.onBeforeScan = () {
+      if (!mounted) return;
+      final d = context.read<DevicesProvider>();
+      if (d.devices.isNotEmpty) {
+        ble.setAutoConnectMacs(d.devices.map((dev) => dev.mac).toSet());
+      }
+    };
+
+    if (ble.isConnected || ble.isScanning) {
+      _setupContinuousScan();
+      return;
     }
-    await ble.startScan(timeoutSec: 8);
+    await ble.startScan(timeoutSec: 8); // onBeforeScan sets MACs internally
     if (!mounted) return;
-    await _tryAutoConnect(); // fallback in case real-time didn't fire
+    await _tryAutoConnect(); // fallback
     _setupContinuousScan();
   }
 
   void _setupContinuousScan() {
-    _continuousScanTimer?.cancel();
     if (!mounted) return;
     final app = context.read<AppProvider>();
     if (!app.continuousScan) return;
-    _continuousScanTimer = Timer.periodic(const Duration(seconds: 20), (_) async {
-      if (!mounted) return;
-      final ble  = context.read<BleProvider>();
-      final app  = context.read<AppProvider>();
-      final devs = context.read<DevicesProvider>();
-      if (ble.isConnected || ble.isScanning) return;
-      if (app.autoConnect && devs.devices.isNotEmpty) {
-        ble.setAutoConnectMacs(devs.devices.map((d) => d.mac).toSet());
+    if (_continuousScanRunning) return;
+    _continuousScanRunning = true;
+    _runContinuousScanLoop();
+  }
+
+  // Tight scan loop — runs until continuousScan is off or widget is gone.
+  // Zero pause between scans: if nothing found → immediately rescan.
+  // If found → auto-connect fires inside startScan; loop waits 2 s then checks.
+  Future<void> _runContinuousScanLoop() async {
+    while (_continuousScanRunning && mounted) {
+      final app = context.read<AppProvider>();
+      final ble = context.read<BleProvider>();
+      if (!app.continuousScan) break;
+      if (ble.isConnected || ble.isConnecting) {
+        await Future.delayed(const Duration(seconds: 2));
+        continue;
       }
-      await ble.startScan(timeoutSec: 8);
-      if (!mounted) return;
-      await _tryAutoConnect();
-    });
+      if (!ble.isScanning) {
+        await ble.startScan(timeoutSec: 5); // onBeforeScan sets MACs
+      }
+      // tiny yield so UI stays responsive between scans
+      await Future.delayed(const Duration(milliseconds: 100));
+    }
+    _continuousScanRunning = false;
   }
 
   Future<void> _tryAutoConnect() async {
@@ -126,10 +145,9 @@ class _MainScreenState extends State<MainScreen> {
       WidgetsBinding.instance.addPostFrameCallback((_) => beacon.detach());
     }
 
-    // Restart continuous scan timer when setting changes
-    if (!(app.continuousScan) && _continuousScanTimer != null) {
-      _continuousScanTimer?.cancel();
-      _continuousScanTimer = null;
+    // Stop continuous scan loop when setting is disabled
+    if (!app.continuousScan && _continuousScanRunning) {
+      _continuousScanRunning = false;
     }
 
     // Auto-disconnect warning dialog
