@@ -189,24 +189,21 @@ class _DataTabState extends State<DataTab> {
   Widget _buildChart(BuildContext context, BeaconProvider beacon, int idx) {
     switch (idx) {
       case 0: return _LineChartCard(
-        title: 'Temperature',
-        unit: '°C',
+        title: 'Temperature', unit: '°C',
         points: beacon.logTempHistory,
         lineColor: const Color(0xFFEF5350),
         formatY: (v) => v.toStringAsFixed(1),
         smoothLine: _smoothLine,
       );
       case 1: return _LineChartCard(
-        title: 'Battery',
-        unit: 'mV',
+        title: 'Battery', unit: 'mV',
         points: beacon.logBatHistory,
         lineColor: const Color(0xFF66BB6A),
         formatY: (v) => v.round().toString(),
         smoothLine: _smoothLine,
       );
       case 2: return _LineChartCard(
-        title: 'Light',
-        unit: 'raw',
+        title: 'Light', unit: 'raw',
         points: beacon.logLightHistory,
         lineColor: const Color(0xFFFFCA28),
         formatY: (v) => v.round().toString(),
@@ -221,7 +218,6 @@ class _DataTabState extends State<DataTab> {
     final usedNow  = beacon.logUsed;
     final totalNow = beacon.logTotal > 0 ? beacon.logTotal : 1;
     final pctNow   = (usedNow * 100 ~/ totalNow).clamp(0, 100);
-
     showDialog(
       context: ctx,
       builder: (_) => AlertDialog(
@@ -258,11 +254,8 @@ class _DataTabState extends State<DataTab> {
     final buf = StringBuffer('ts_unix,temp_c,bat_mv,bat_pct,light_raw\n');
     for (final e in beacon.logEntries) {
       buf.write([
-        e['ts'] ?? '',
-        e['temp_c'] ?? '',
-        e['bat_mv'] ?? '',
-        e['bat_pct'] ?? '',
-        e['light_raw'] ?? '',
+        e['ts'] ?? '', e['temp_c'] ?? '', e['bat_mv'] ?? '',
+        e['bat_pct'] ?? '', e['light_raw'] ?? '',
       ].join(','));
       buf.write('\n');
     }
@@ -280,7 +273,7 @@ class _DataTabState extends State<DataTab> {
   }
 }
 
-// ── Line chart card (stateful for pinch-zoom) ──────────────────────────────
+// ── Line chart card with pinch-to-zoom (Listener-based, no gesture conflicts)
 
 class _LineChartCard extends StatefulWidget {
   final String title;
@@ -306,13 +299,75 @@ class _LineChartCard extends StatefulWidget {
 }
 
 class _LineChartCardState extends State<_LineChartCard> {
-  final _transform = TransformationController();
+  // Zoom / pan state
+  double _zoom    = 1.0;  // 1.0 = full data range visible
+  double _panFrac = 0.0;  // 0.0 = leftmost, 1.0 = rightmost of zoomed window
+
+  // Pointer tracking (Listener-based pinch detection — no gesture arena conflict)
+  final _pts = <int, Offset>{};
+  double _gsZoom   = 1.0;
+  double _gsDist   = 0.0;
+  Offset _gsCenter = Offset.zero;
+
+  // Data range (set each build, read by pointer handlers)
+  double _spanX    = 1.0;
+  double _dataMinX = 0.0;
 
   @override
-  void dispose() {
-    _transform.dispose();
-    super.dispose();
+  void didUpdateWidget(_LineChartCard old) {
+    super.didUpdateWidget(old);
+    if (widget.points != old.points) {
+      _zoom = 1.0;
+      _panFrac = 0.0;
+    }
   }
+
+  void _pDown(PointerDownEvent e) {
+    _pts[e.pointer] = e.localPosition;
+    if (_pts.length == 2) {
+      final vs = _pts.values.toList();
+      _gsDist   = (vs[0] - vs[1]).distance;
+      _gsZoom   = _zoom;
+      _gsCenter = Offset((vs[0].dx + vs[1].dx) / 2, (vs[0].dy + vs[1].dy) / 2);
+    }
+  }
+
+  void _pMove(PointerMoveEvent e, double chartW) {
+    _pts[e.pointer] = e.localPosition;
+    if (_pts.length < 2 || _gsDist <= 0) return;
+
+    final vs     = _pts.values.toList();
+    final dist   = (vs[0] - vs[1]).distance;
+    final center = Offset((vs[0].dx + vs[1].dx) / 2, (vs[0].dy + vs[1].dy) / 2);
+
+    // Zoom: stable ratio from gesture start
+    final newZoom = (_gsZoom * dist / _gsDist).clamp(1.0, 20.0);
+
+    // Pan: incremental (delta of center since last event)
+    final dx = center.dx - _gsCenter.dx;
+    _gsCenter = center;
+
+    final viewSpan   = _spanX / newZoom;
+    final maxPanData = (_spanX - viewSpan).clamp(0.0, double.infinity);
+
+    double newPanFrac = _panFrac;
+    if (maxPanData > 0 && chartW > 0) {
+      final dataPerPixel  = viewSpan / chartW;
+      final curPanData    = _panFrac * maxPanData;
+      final newPanData    = (curPanData - dx * dataPerPixel).clamp(0.0, maxPanData);
+      newPanFrac = newPanData / maxPanData;
+    }
+
+    setState(() {
+      _zoom    = newZoom;
+      _panFrac = newPanFrac;
+    });
+  }
+
+  void _pUp(PointerUpEvent e)         => _pts.remove(e.pointer);
+  void _pCancel(PointerCancelEvent e) => _pts.remove(e.pointer);
+
+  void _resetZoom() => setState(() { _zoom = 1.0; _panFrac = 0.0; });
 
   @override
   Widget build(BuildContext context) {
@@ -320,8 +375,7 @@ class _LineChartCardState extends State<_LineChartCard> {
       return Center(child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.show_chart, size: 56,
-              color: Colors.grey.withValues(alpha: 0.2)),
+          Icon(Icons.show_chart, size: 56, color: Colors.grey.withValues(alpha: 0.2)),
           const SizedBox(height: 12),
           Text('No data — press "Download from beacon"',
               style: Theme.of(context).textTheme.bodySmall,
@@ -336,13 +390,21 @@ class _LineChartCardState extends State<_LineChartCard> {
     final axisC  = isDark ? Colors.white24 : Colors.black26;
     final lblC   = isDark ? Colors.white54 : Colors.black45;
 
-    final spots = _toSpots(widget.points);
+    final spots    = _toSpots(widget.points);
     final dataMinX = spots.first.x;
     final dataMaxX = spots.last.x;
-    final spanX  = (dataMaxX - dataMinX).clamp(1.0, double.infinity);
-    final edgeX  = spots.length == 1 ? spanX * 0.5 : spanX * 0.05;
-    final minX   = dataMinX - edgeX;
-    final maxX   = dataMaxX + edgeX;
+    _spanX    = (dataMaxX - dataMinX).clamp(1.0, double.infinity);
+    _dataMinX = dataMinX;
+
+    // Compute visible window from zoom + pan
+    final viewSpan    = _spanX / _zoom;
+    final maxPanData  = (_spanX - viewSpan).clamp(0.0, double.infinity);
+    final panOffset   = _panFrac * maxPanData;
+    final viewMinX    = _dataMinX + panOffset;
+    final viewMaxX    = viewMinX + viewSpan;
+    final edgeX       = (viewSpan * 0.05).clamp(0.5, double.infinity);
+    final minX        = viewMinX - edgeX;
+    final maxX        = viewMaxX + edgeX;
 
     final yVals  = spots.map((s) => s.y).toList();
     final rawMin = yVals.reduce((a, b) => a < b ? a : b);
@@ -354,8 +416,8 @@ class _LineChartCardState extends State<_LineChartCard> {
     final yRange = (yMax - yMin).clamp(0.1, double.infinity);
 
     double niceInterval(double range, int ticks) {
-      final raw = range / ticks;
-      final mag = (raw == 0) ? 1.0 : pow(10, (log(raw) / ln10).floor()).toDouble();
+      final raw  = range / ticks;
+      final mag  = (raw == 0) ? 1.0 : pow(10, (log(raw) / ln10).floor()).toDouble();
       final norm = raw / mag;
       if (norm <= 1) return mag;
       if (norm <= 2) return 2 * mag;
@@ -363,8 +425,8 @@ class _LineChartCardState extends State<_LineChartCard> {
       return 10 * mag;
     }
     final yInterval = niceInterval(yRange, 5);
-    final xInterval = niceInterval(spanX, 4);
-    final spanH = spanX / 3600;
+    final xInterval = niceInterval(viewSpan, 4);
+    final spanH = _spanX / 3600;
 
     String xLabel(double v) {
       final dt = DateTime.fromMillisecondsSinceEpoch(v.toInt() * 1000).toLocal();
@@ -375,134 +437,29 @@ class _LineChartCardState extends State<_LineChartCard> {
       return '${dt.hour.toString().padLeft(2,'0')}:${dt.minute.toString().padLeft(2,'0')}';
     }
 
-    final chartData = LineChartData(
-      minX: minX, maxX: maxX,
-      minY: yMin,  maxY: yMax,
-      clipData: const FlClipData.all(),
-      gridData: FlGridData(
-        show: true,
-        drawHorizontalLine: true,
-        drawVerticalLine: true,
-        horizontalInterval: yInterval,
-        verticalInterval: xInterval,
-        getDrawingHorizontalLine: (_) => FlLine(color: gridC, strokeWidth: 1),
-        getDrawingVerticalLine: (_) =>
-            FlLine(color: gridC, strokeWidth: 1, dashArray: [4, 4]),
-      ),
-      borderData: FlBorderData(
-        show: true,
-        border: Border(
-          left:   BorderSide(color: axisC, width: 1),
-          bottom: BorderSide(color: axisC, width: 1),
-          right:  BorderSide(color: Colors.transparent),
-          top:    BorderSide(color: Colors.transparent),
-        ),
-      ),
-      titlesData: FlTitlesData(
-        leftTitles: AxisTitles(
-          sideTitles: SideTitles(
-            showTitles: true,
-            reservedSize: 52,
-            interval: yInterval,
-            getTitlesWidget: (v, meta) {
-              if (v == meta.min || v == meta.max) return const SizedBox.shrink();
-              return Padding(
-                padding: const EdgeInsets.only(right: 6),
-                child: Text(widget.formatY(v),
-                    textAlign: TextAlign.right,
-                    style: TextStyle(fontSize: 10, color: lblC)),
-              );
-            },
-          ),
-        ),
-        bottomTitles: AxisTitles(
-          sideTitles: SideTitles(
-            showTitles: true,
-            reservedSize: spanH > 24 ? 36 : 22,
-            interval: xInterval,
-            getTitlesWidget: (v, meta) {
-              if (v == meta.min || v == meta.max) return const SizedBox.shrink();
-              return Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text(xLabel(v),
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 9, color: lblC)),
-              );
-            },
-          ),
-        ),
-        rightTitles: const AxisTitles(
-            sideTitles: SideTitles(showTitles: false, reservedSize: 8)),
-        topTitles: const AxisTitles(
-            sideTitles: SideTitles(showTitles: false, reservedSize: 8)),
-      ),
-      lineBarsData: [
-        LineChartBarData(
-          spots: spots,
-          color: widget.lineColor,
-          barWidth: 2.0,
-          isCurved: widget.smoothLine,
-          curveSmoothness: widget.smoothLine ? 0.35 : 0.0,
-          dotData: FlDotData(show: spots.length <= 40,
-              getDotPainter: (_, __, ___, ____) =>
-                  FlDotCirclePainter(
-                      radius: 2.5,
-                      color: widget.lineColor,
-                      strokeWidth: 1.5,
-                      strokeColor: Colors.white.withValues(alpha: 0.6))),
-          belowBarData: BarAreaData(
-            show: true,
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                widget.lineColor.withValues(alpha: 0.30),
-                widget.lineColor.withValues(alpha: 0.0),
-              ],
-            ),
-          ),
-        ),
-      ],
-      lineTouchData: LineTouchData(
-        handleBuiltInTouches: true,
-        touchTooltipData: LineTouchTooltipData(
-          tooltipRoundedRadius: 8,
-          getTooltipItems: (touchedSpots) =>
-              touchedSpots.map((s) {
-                final dt = DateTime.fromMillisecondsSinceEpoch(
-                    s.x.toInt() * 1000).toLocal();
-                final time =
-                    '${dt.hour.toString().padLeft(2,'0')}:'
-                    '${dt.minute.toString().padLeft(2,'0')}:'
-                    '${dt.second.toString().padLeft(2,'0')}';
-                return LineTooltipItem(
-                  '${widget.formatY(s.y)} ${widget.unit}\n$time',
-                  TextStyle(
-                    color: theme.colorScheme.onSurface,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
-                );
-              }).toList(),
-        ),
-      ),
-    );
-
     return Column(children: [
-      // ── header: title + unit + stats ────────────────────────────────
+      // ── header ──────────────────────────────────────────────────────
       Padding(
         padding: const EdgeInsets.fromLTRB(12, 6, 4, 6),
         child: Row(children: [
           Text(widget.title,
               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-          Text('  (${widget.unit})',
-              style: TextStyle(fontSize: 12, color: lblC)),
+          Text('  (${widget.unit})', style: TextStyle(fontSize: 12, color: lblC)),
           const Spacer(),
           _StatBadge('MIN', widget.formatY(rawMin), Colors.blueAccent),
           const SizedBox(width: 6),
           _StatBadge('AVG', widget.formatY(rawAvg), Colors.orange),
           const SizedBox(width: 6),
           _StatBadge('MAX', widget.formatY(rawMax), widget.lineColor),
+          // Reset zoom button (only when zoomed in)
+          if (_zoom > 1.01)
+            IconButton(
+              icon: const Icon(Icons.zoom_out_map, size: 18),
+              tooltip: 'Reset zoom',
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              constraints: const BoxConstraints(),
+              onPressed: _resetZoom,
+            ),
           if (!widget.fullscreen)
             Builder(builder: (ctx) => IconButton(
               icon: const Icon(Icons.fullscreen, size: 20),
@@ -519,21 +476,143 @@ class _LineChartCardState extends State<_LineChartCard> {
             )),
         ]),
       ),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+        child: Row(children: [
+          Icon(Icons.pinch_outlined, size: 11, color: lblC),
+          const SizedBox(width: 3),
+          Text('Pinch to zoom · tap for tooltip',
+              style: TextStyle(fontSize: 9, color: lblC)),
+        ]),
+      ),
       const Divider(height: 1),
-      // ── chart (pinch-to-zoom; double-tap to reset) ───────────────────
-      Expanded(child: Padding(
-        padding: const EdgeInsets.fromLTRB(4, 12, 16, 8),
-        child: GestureDetector(
-          onDoubleTap: () => _transform.value = Matrix4.identity(),
-          child: InteractiveViewer(
-            transformationController: _transform,
-            clipBehavior: Clip.hardEdge,
-            boundaryMargin: const EdgeInsets.symmetric(vertical: 20, horizontal: 0),
-            minScale: 1.0,
-            maxScale: 15.0,
-            child: LineChart(chartData),
-          ),
-        ),
+
+      // ── chart + Listener for pinch-zoom ─────────────────────────────
+      Expanded(child: LayoutBuilder(
+        builder: (ctx, constraints) {
+          final chartW = constraints.maxWidth;
+          return Listener(
+            behavior: HitTestBehavior.translucent,
+            onPointerDown:   _pDown,
+            onPointerMove:   (e) => _pMove(e, chartW),
+            onPointerUp:     _pUp,
+            onPointerCancel: _pCancel,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(4, 12, 16, 8),
+              child: LineChart(LineChartData(
+                minX: minX, maxX: maxX,
+                minY: yMin, maxY: yMax,
+                clipData: const FlClipData.all(),
+                gridData: FlGridData(
+                  show: true,
+                  drawHorizontalLine: true,
+                  drawVerticalLine: true,
+                  horizontalInterval: yInterval,
+                  verticalInterval: xInterval,
+                  getDrawingHorizontalLine: (_) => FlLine(color: gridC, strokeWidth: 1),
+                  getDrawingVerticalLine: (_) =>
+                      FlLine(color: gridC, strokeWidth: 1, dashArray: [4, 4]),
+                ),
+                borderData: FlBorderData(
+                  show: true,
+                  border: Border(
+                    left:   BorderSide(color: axisC, width: 1),
+                    bottom: BorderSide(color: axisC, width: 1),
+                    right:  BorderSide(color: Colors.transparent),
+                    top:    BorderSide(color: Colors.transparent),
+                  ),
+                ),
+                titlesData: FlTitlesData(
+                  leftTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles: true,
+                      reservedSize: 52,
+                      interval: yInterval,
+                      getTitlesWidget: (v, meta) {
+                        if (v == meta.min || v == meta.max) return const SizedBox.shrink();
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 6),
+                          child: Text(widget.formatY(v),
+                              textAlign: TextAlign.right,
+                              style: TextStyle(fontSize: 10, color: lblC)),
+                        );
+                      },
+                    ),
+                  ),
+                  bottomTitles: AxisTitles(
+                    sideTitles: SideTitles(
+                      showTitles: true,
+                      reservedSize: spanH > 24 ? 36 : 22,
+                      interval: xInterval,
+                      getTitlesWidget: (v, meta) {
+                        if (v == meta.min || v == meta.max) return const SizedBox.shrink();
+                        return Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(xLabel(v),
+                              textAlign: TextAlign.center,
+                              style: TextStyle(fontSize: 9, color: lblC)),
+                        );
+                      },
+                    ),
+                  ),
+                  rightTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false, reservedSize: 8)),
+                  topTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false, reservedSize: 8)),
+                ),
+                lineBarsData: [
+                  LineChartBarData(
+                    spots: spots,
+                    color: widget.lineColor,
+                    barWidth: 2.0,
+                    isCurved: widget.smoothLine,
+                    curveSmoothness: widget.smoothLine ? 0.35 : 0.0,
+                    dotData: FlDotData(
+                      show: spots.length <= 40,
+                      getDotPainter: (_, __, ___, ____) =>
+                          FlDotCirclePainter(
+                              radius: 2.5,
+                              color: widget.lineColor,
+                              strokeWidth: 1.5,
+                              strokeColor: Colors.white.withValues(alpha: 0.6))),
+                    belowBarData: BarAreaData(
+                      show: true,
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          widget.lineColor.withValues(alpha: 0.30),
+                          widget.lineColor.withValues(alpha: 0.0),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+                lineTouchData: LineTouchData(
+                  handleBuiltInTouches: true,
+                  touchTooltipData: LineTouchTooltipData(
+                    tooltipRoundedRadius: 8,
+                    getTooltipItems: (ts) => ts.map((s) {
+                      final dt = DateTime.fromMillisecondsSinceEpoch(
+                          s.x.toInt() * 1000).toLocal();
+                      final t = '${dt.hour.toString().padLeft(2,'0')}:'
+                          '${dt.minute.toString().padLeft(2,'0')}:'
+                          '${dt.second.toString().padLeft(2,'0')}';
+                      return LineTooltipItem(
+                        '${widget.formatY(s.y)} ${widget.unit}\n$t',
+                        TextStyle(
+                          color: theme.colorScheme.onSurface,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ),
+              )),
+            ),
+          );
+        },
       )),
     ]);
   }
@@ -558,16 +637,16 @@ class _StatBadge extends StatelessWidget {
       borderRadius: BorderRadius.circular(6),
       border: Border.all(color: color.withValues(alpha: 0.35)),
     ),
-    child: RichText(text: TextSpan(
-      children: [
-        TextSpan(text: '$label ', style: TextStyle(fontSize: 9, color: color.withValues(alpha: 0.7))),
-        TextSpan(text: value, style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: color)),
-      ],
-    )),
+    child: RichText(text: TextSpan(children: [
+      TextSpan(text: '$label ',
+          style: TextStyle(fontSize: 9, color: color.withValues(alpha: 0.7))),
+      TextSpan(text: value,
+          style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: color)),
+    ])),
   );
 }
 
-// ── Accel chart (3 lines: X, Y, Z) with pinch-zoom ───────────────────────
+// ── Accel chart (3 lines X/Y/Z) with pinch-zoom ───────────────────────────
 
 class _AccelChart extends StatefulWidget {
   final BeaconProvider beacon;
@@ -577,13 +656,48 @@ class _AccelChart extends StatefulWidget {
 }
 
 class _AccelChartState extends State<_AccelChart> {
-  final _transform = TransformationController();
+  double _zoom    = 1.0;
+  double _panFrac = 0.0;
+  double _spanX   = 1.0;
+  double _minX0   = 0.0;
 
-  @override
-  void dispose() {
-    _transform.dispose();
-    super.dispose();
+  final _pts = <int, Offset>{};
+  double _gsZoom   = 1.0;
+  double _gsDist   = 0.0;
+  Offset _gsCenter = Offset.zero;
+
+  void _pDown(PointerDownEvent e) {
+    _pts[e.pointer] = e.localPosition;
+    if (_pts.length == 2) {
+      final vs = _pts.values.toList();
+      _gsDist   = (vs[0] - vs[1]).distance;
+      _gsZoom   = _zoom;
+      _gsCenter = Offset((vs[0].dx + vs[1].dx) / 2, (vs[0].dy + vs[1].dy) / 2);
+    }
   }
+
+  void _pMove(PointerMoveEvent e, double chartW) {
+    _pts[e.pointer] = e.localPosition;
+    if (_pts.length < 2 || _gsDist <= 0) return;
+    final vs     = _pts.values.toList();
+    final dist   = (vs[0] - vs[1]).distance;
+    final center = Offset((vs[0].dx + vs[1].dx) / 2, (vs[0].dy + vs[1].dy) / 2);
+    final newZoom = (_gsZoom * dist / _gsDist).clamp(1.0, 20.0);
+    final dx = center.dx - _gsCenter.dx;
+    _gsCenter = center;
+    final viewSpan   = _spanX / newZoom;
+    final maxPanData = (_spanX - viewSpan).clamp(0.0, double.infinity);
+    double newPanFrac = _panFrac;
+    if (maxPanData > 0 && chartW > 0) {
+      final dataPerPixel = viewSpan / chartW;
+      final newPanData = (_panFrac * maxPanData - dx * dataPerPixel).clamp(0.0, maxPanData);
+      newPanFrac = newPanData / maxPanData;
+    }
+    setState(() { _zoom = newZoom; _panFrac = newPanFrac; });
+  }
+
+  void _pUp(PointerUpEvent e)         => _pts.remove(e.pointer);
+  void _pCancel(PointerCancelEvent e) => _pts.remove(e.pointer);
 
   @override
   Widget build(BuildContext context) {
@@ -612,29 +726,43 @@ class _AccelChartState extends State<_AccelChart> {
     final allPts = [
       ...beacon.logAccelXHistory, ...beacon.logAccelYHistory, ...beacon.logAccelZHistory,
     ];
-    final dataMinX = allPts.map((p) => p.ts.millisecondsSinceEpoch / 1000.0).reduce((a, b) => a < b ? a : b);
-    final dataMaxX = allPts.map((p) => p.ts.millisecondsSinceEpoch / 1000.0).reduce((a, b) => a > b ? a : b);
-    final spanX  = (dataMaxX - dataMinX).clamp(1.0, double.infinity);
-    final edgeX  = allPts.length <= 3 ? spanX * 0.5 : spanX * 0.05;
-    final minX   = dataMinX - edgeX;
-    final maxX   = dataMaxX + edgeX;
+    final dataMinX0 = allPts.map((p) => p.ts.millisecondsSinceEpoch / 1000.0).reduce((a, b) => a < b ? a : b);
+    final dataMaxX0 = allPts.map((p) => p.ts.millisecondsSinceEpoch / 1000.0).reduce((a, b) => a > b ? a : b);
+    _spanX = (dataMaxX0 - dataMinX0).clamp(1.0, double.infinity);
+    _minX0 = dataMinX0;
+
+    final viewSpan   = _spanX / _zoom;
+    final maxPanData = (_spanX - viewSpan).clamp(0.0, double.infinity);
+    final panOffset  = _panFrac * maxPanData;
+    final viewMinX   = _minX0 + panOffset;
+    final viewMaxX   = viewMinX + viewSpan;
+    final edgeX      = (viewSpan * 0.05).clamp(0.5, double.infinity);
+    final minX       = viewMinX - edgeX;
+    final maxX       = viewMaxX + edgeX;
+
     final rawYMin = allPts.map((p) => p.value).reduce((a, b) => a < b ? a : b);
     final rawYMax = allPts.map((p) => p.value).reduce((a, b) => a > b ? a : b);
-    final yPad = ((rawYMax - rawYMin) * 0.12).clamp(0.05, double.infinity);
-    final minY = rawYMin - yPad;
-    final maxY = rawYMax + yPad;
+    final yPad    = ((rawYMax - rawYMin) * 0.12).clamp(0.05, double.infinity);
 
     FlSpot toSpot(ChartPoint p) =>
         FlSpot(p.ts.millisecondsSinceEpoch / 1000.0, p.value);
 
     return Column(children: [
       Padding(
-        padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
+        padding: const EdgeInsets.fromLTRB(12, 6, 12, 2),
         child: Row(children: [
           const Text('Accelerometer',
               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
           Text('  (g)', style: TextStyle(fontSize: 12, color: lblC)),
           const Spacer(),
+          if (_zoom > 1.01)
+            IconButton(
+              icon: const Icon(Icons.zoom_out_map, size: 18),
+              tooltip: 'Reset zoom',
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              constraints: const BoxConstraints(),
+              onPressed: () => setState(() { _zoom = 1.0; _panFrac = 0.0; }),
+            ),
           _Legend('X', const Color(0xFFF44336)),
           const SizedBox(width: 8),
           _Legend('Y', const Color(0xFF4CAF50)),
@@ -642,87 +770,107 @@ class _AccelChartState extends State<_AccelChart> {
           _Legend('Z', const Color(0xFF2196F3)),
         ]),
       ),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+        child: Row(children: [
+          Icon(Icons.pinch_outlined, size: 11, color: lblC),
+          const SizedBox(width: 3),
+          Text('Pinch to zoom · tap for tooltip',
+              style: TextStyle(fontSize: 9, color: lblC)),
+        ]),
+      ),
       const Divider(height: 1),
-      Expanded(child: Padding(
-        padding: const EdgeInsets.fromLTRB(4, 12, 16, 8),
-        child: GestureDetector(
-          onDoubleTap: () => _transform.value = Matrix4.identity(),
-          child: InteractiveViewer(
-            transformationController: _transform,
-            clipBehavior: Clip.hardEdge,
-            boundaryMargin: const EdgeInsets.symmetric(vertical: 20, horizontal: 0),
-            minScale: 1.0,
-            maxScale: 15.0,
-            child: LineChart(LineChartData(
-              minX: minX, maxX: maxX,
-              minY: minY, maxY: maxY,
-              clipData: const FlClipData.all(),
-              gridData: FlGridData(
-                show: true,
-                getDrawingHorizontalLine: (_) => FlLine(color: gridC, strokeWidth: 1),
-                getDrawingVerticalLine:   (_) => FlLine(color: gridC, strokeWidth: 1, dashArray: [4, 4]),
-              ),
-              borderData: FlBorderData(
-                show: true,
-                border: Border(
-                  left:   BorderSide(color: axisC, width: 1),
-                  bottom: BorderSide(color: axisC, width: 1),
-                  right:  BorderSide.none,
-                  top:    BorderSide.none,
+      Expanded(child: LayoutBuilder(
+        builder: (ctx, constraints) {
+          final chartW = constraints.maxWidth;
+          return Listener(
+            behavior: HitTestBehavior.translucent,
+            onPointerDown:   _pDown,
+            onPointerMove:   (e) => _pMove(e, chartW),
+            onPointerUp:     _pUp,
+            onPointerCancel: _pCancel,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(4, 12, 16, 8),
+              child: LineChart(LineChartData(
+                minX: minX, maxX: maxX,
+                minY: rawYMin - yPad, maxY: rawYMax + yPad,
+                clipData: const FlClipData.all(),
+                gridData: FlGridData(
+                  show: true,
+                  getDrawingHorizontalLine: (_) => FlLine(color: gridC, strokeWidth: 1),
+                  getDrawingVerticalLine: (_) =>
+                      FlLine(color: gridC, strokeWidth: 1, dashArray: [4, 4]),
                 ),
-              ),
-              titlesData: FlTitlesData(
-                leftTitles: AxisTitles(sideTitles: SideTitles(
-                  showTitles: true, reservedSize: 44,
-                  getTitlesWidget: (v, meta) {
-                    if (v == meta.min || v == meta.max) return const SizedBox.shrink();
-                    return Padding(
-                      padding: const EdgeInsets.only(right: 6),
-                      child: Text(v.toStringAsFixed(2),
-                          textAlign: TextAlign.right,
-                          style: TextStyle(fontSize: 10, color: lblC)),
-                    );
-                  },
-                )),
-                bottomTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false, reservedSize: 8)),
-                rightTitles:  const AxisTitles(sideTitles: SideTitles(showTitles: false, reservedSize: 8)),
-                topTitles:    const AxisTitles(sideTitles: SideTitles(showTitles: false, reservedSize: 8)),
-              ),
-              lineBarsData: [
-                if (beacon.logAccelXHistory.isNotEmpty)
-                  _accelBar(beacon.logAccelXHistory.map(toSpot).toList(), const Color(0xFFF44336)),
-                if (beacon.logAccelYHistory.isNotEmpty)
-                  _accelBar(beacon.logAccelYHistory.map(toSpot).toList(), const Color(0xFF4CAF50)),
-                if (beacon.logAccelZHistory.isNotEmpty)
-                  _accelBar(beacon.logAccelZHistory.map(toSpot).toList(), const Color(0xFF2196F3)),
-              ],
-              lineTouchData: LineTouchData(
-                touchTooltipData: LineTouchTooltipData(
-                  tooltipRoundedRadius: 8,
-                  getTooltipItems: (spots) => spots.map((s) {
-                    final labels = ['X', 'Y', 'Z'];
-                    final colors = [const Color(0xFFF44336), const Color(0xFF4CAF50), const Color(0xFF2196F3)];
-                    final i = s.barIndex.clamp(0, 2);
-                    return LineTooltipItem(
-                      '${labels[i]}: ${s.y.toStringAsFixed(3)} g',
-                      TextStyle(color: colors[i], fontSize: 12, fontWeight: FontWeight.bold),
-                    );
-                  }).toList(),
+                borderData: FlBorderData(
+                  show: true,
+                  border: Border(
+                    left:   BorderSide(color: axisC, width: 1),
+                    bottom: BorderSide(color: axisC, width: 1),
+                    right:  BorderSide.none,
+                    top:    BorderSide.none,
+                  ),
                 ),
-              ),
-            )),
-          ),
-        ),
+                titlesData: FlTitlesData(
+                  leftTitles: AxisTitles(sideTitles: SideTitles(
+                    showTitles: true, reservedSize: 44,
+                    getTitlesWidget: (v, meta) {
+                      if (v == meta.min || v == meta.max) return const SizedBox.shrink();
+                      return Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: Text(v.toStringAsFixed(2),
+                            textAlign: TextAlign.right,
+                            style: TextStyle(fontSize: 10, color: lblC)),
+                      );
+                    },
+                  )),
+                  bottomTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false, reservedSize: 8)),
+                  rightTitles:  const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false, reservedSize: 8)),
+                  topTitles:    const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false, reservedSize: 8)),
+                ),
+                lineBarsData: [
+                  if (beacon.logAccelXHistory.isNotEmpty)
+                    _accelBar(beacon.logAccelXHistory.map(toSpot).toList(),
+                        const Color(0xFFF44336)),
+                  if (beacon.logAccelYHistory.isNotEmpty)
+                    _accelBar(beacon.logAccelYHistory.map(toSpot).toList(),
+                        const Color(0xFF4CAF50)),
+                  if (beacon.logAccelZHistory.isNotEmpty)
+                    _accelBar(beacon.logAccelZHistory.map(toSpot).toList(),
+                        const Color(0xFF2196F3)),
+                ],
+                lineTouchData: LineTouchData(
+                  touchTooltipData: LineTouchTooltipData(
+                    tooltipRoundedRadius: 8,
+                    getTooltipItems: (spots) => spots.map((s) {
+                      const labels = ['X', 'Y', 'Z'];
+                      const colors = [
+                        Color(0xFFF44336), Color(0xFF4CAF50), Color(0xFF2196F3)];
+                      final i = s.barIndex.clamp(0, 2);
+                      return LineTooltipItem(
+                        '${labels[i]}: ${s.y.toStringAsFixed(3)} g',
+                        TextStyle(color: colors[i], fontSize: 12,
+                            fontWeight: FontWeight.bold),
+                      );
+                    }).toList(),
+                  ),
+                ),
+              )),
+            ),
+          );
+        },
       )),
     ]);
   }
 
-  LineChartBarData _accelBar(List<FlSpot> spots, Color color) => LineChartBarData(
-    spots: spots, color: color, barWidth: 1.5,
-    isCurved: spots.length > 20,
-    curveSmoothness: 0.1,
-    dotData: FlDotData(show: spots.length <= 30),
-  );
+  LineChartBarData _accelBar(List<FlSpot> spots, Color color) =>
+      LineChartBarData(
+        spots: spots, color: color, barWidth: 1.5,
+        isCurved: spots.length > 20, curveSmoothness: 0.1,
+        dotData: FlDotData(show: spots.length <= 30),
+      );
 }
 
 class _Legend extends StatelessWidget {
@@ -771,13 +919,9 @@ class _FullscreenChartScreen extends StatelessWidget {
       ),
       body: SafeArea(
         child: _LineChartCard(
-          title: title,
-          unit: unit,
-          points: points,
-          lineColor: lineColor,
-          formatY: formatY,
-          fullscreen: true,
-          smoothLine: smoothLine,
+          title: title, unit: unit, points: points,
+          lineColor: lineColor, formatY: formatY,
+          fullscreen: true, smoothLine: smoothLine,
         ),
       ),
     );

@@ -176,7 +176,7 @@ class BleProvider extends ChangeNotifier {
     _connectedName  = name;
     _isConnected    = true;
     _statusMsg      = 'Connected: $name';
-    Vibration.vibrate(duration: 350); // single pulse on connect
+    Vibration.vibrate(duration: 350).catchError((_) {}); // single pulse on connect
     notifyListeners();
 
     // Watch for remote disconnect
@@ -208,7 +208,7 @@ class BleProvider extends ChangeNotifier {
     _isConnected = false;
     _rssi = 0;
     _statusMsg = 'Disconnected';
-    Vibration.vibrate(pattern: [0, 120, 100, 120]); // two short pulses on loss
+    _vibrateDisconnect();
     notifyListeners();
     if (_autoScanEnabled) {
       _autoScanRestartTimer?.cancel();
@@ -228,6 +228,7 @@ class BleProvider extends ChangeNotifier {
     _isConnected = false;
     _rssi = 0;
     _statusMsg = 'Disconnected';
+    _vibrateDisconnect();
     notifyListeners();
     if (_autoScanEnabled) {
       _autoScanRestartTimer?.cancel();
@@ -291,6 +292,10 @@ class BleProvider extends ChangeNotifier {
     } else if (_isConnected) {
       _startInactivityTimer();
     }
+  }
+
+  void _vibrateDisconnect() {
+    Vibration.vibrate(pattern: [0, 120, 100, 120]).catchError((_) {});
   }
 
   @override
