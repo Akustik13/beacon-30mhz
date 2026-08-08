@@ -161,9 +161,17 @@ class _FleetHomeTabState extends State<FleetHomeTab> {
     return '${diff.inDays}d ago';
   }
 
+  // Remember last open tab per beacon MAC so re-entering restores the same tab
+  final _lastTabPerMac = <String, int>{};
+
   void _openDetail(BuildContext ctx, String mac, String name) {
     Navigator.of(ctx).push(MaterialPageRoute(
-      builder: (_) => _BeaconDetailScreen(mac: mac, name: name),
+      builder: (_) => _BeaconDetailScreen(
+        mac: mac,
+        name: name,
+        initialTab: _lastTabPerMac[mac] ?? 0,
+        onTabChanged: (i) => _lastTabPerMac[mac] = i,
+      ),
     ));
   }
 }
@@ -173,7 +181,12 @@ class _FleetHomeTabState extends State<FleetHomeTab> {
 class _BeaconDetailScreen extends StatefulWidget {
   final String mac;
   final String name;
-  const _BeaconDetailScreen({required this.mac, required this.name});
+  final int initialTab;
+  final void Function(int)? onTabChanged;
+  const _BeaconDetailScreen({
+    required this.mac, required this.name,
+    this.initialTab = 0, this.onTabChanged,
+  });
   @override
   State<_BeaconDetailScreen> createState() => _BeaconDetailScreenState();
 }
@@ -187,7 +200,13 @@ class _BeaconDetailScreenState extends State<_BeaconDetailScreen>
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 6, vsync: this);
+    _tabs = TabController(
+      length: 4, vsync: this,
+      initialIndex: widget.initialTab.clamp(0, 3),
+    );
+    _tabs.addListener(() {
+      if (!_tabs.indexIsChanging) widget.onTabChanged?.call(_tabs.index);
+    });
     _scanAnim = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 2),
@@ -319,15 +338,11 @@ class _BeaconDetailScreenState extends State<_BeaconDetailScreen>
         ],
         bottom: TabBar(
           controller: _tabs,
-          isScrollable: true,
-          tabAlignment: TabAlignment.start,
           tabs: const [
-            Tab(text: 'Overview'),
-            Tab(text: 'Beacon'),
-            Tab(text: 'Logging'),
-            Tab(text: 'Data'),
-            Tab(text: 'Events'),
-            Tab(text: 'BLE'),
+            Tab(child: _TabLabel(Icons.home_outlined,  'Overview')),
+            Tab(child: _TabLabel(Icons.tune_outlined,  'Config')),
+            Tab(child: _TabLabel(Icons.show_chart,     'Data')),
+            Tab(child: _TabLabel(Icons.bluetooth,      'BLE')),
           ],
         ),
       ),
@@ -335,13 +350,81 @@ class _BeaconDetailScreenState extends State<_BeaconDetailScreen>
         controller: _tabs,
         children: [
           _embed(const HomeTab()),
-          _embed(const BeaconTab()),
-          _embed(const LoggingTab()),
+          _embed(const _ManageTab()),   // Beacon · Logging · Events
           _embed(const DataTab()),
-          _embed(const EventsTab()),
           _embed(const DevicesTab()),
         ],
       ),
     );
+  }
+}
+
+// ── Compact tab label: icon left of text, single-height row ──────────────────
+
+class _TabLabel extends StatelessWidget {
+  final IconData icon;
+  final String   label;
+  const _TabLabel(this.icon, this.label);
+
+  @override
+  Widget build(BuildContext context) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Icon(icon, size: 16),
+      const SizedBox(width: 6),
+      Text(label, style: const TextStyle(fontSize: 13)),
+    ],
+  );
+}
+
+// ── Config group: Beacon · Logging · Events in inner tab bar ─────────────────
+
+class _ManageTab extends StatefulWidget {
+  const _ManageTab();
+  @override
+  State<_ManageTab> createState() => _ManageTabState();
+}
+
+class _ManageTabState extends State<_ManageTab> with SingleTickerProviderStateMixin {
+  late TabController _inner;
+
+  @override
+  void initState() {
+    super.initState();
+    _inner = TabController(length: 3, vsync: this);
+  }
+
+  @override
+  void dispose() {
+    _inner.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(children: [
+      Material(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        child: TabBar(
+          controller: _inner,
+          indicatorSize: TabBarIndicatorSize.tab,
+          tabs: const [
+            Tab(text: 'Beacon'),
+            Tab(text: 'Logging'),
+            Tab(text: 'Events'),
+          ],
+        ),
+      ),
+      Expanded(
+        child: TabBarView(
+          controller: _inner,
+          children: const [
+            BeaconTab(),
+            LoggingTab(),
+            EventsTab(),
+          ],
+        ),
+      ),
+    ]);
   }
 }

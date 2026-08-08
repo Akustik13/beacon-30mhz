@@ -294,25 +294,36 @@ class _DisconnectWarningDialogState extends State<_DisconnectWarningDialog> {
           style: TextStyle(fontSize: 13, color: Colors.grey[500]),
         ),
       ]),
-      actionsAlignment: MainAxisAlignment.spaceEvenly,
+      actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
       actions: [
-        OutlinedButton.icon(
-          onPressed: () {
-            ble.resetInactivity();
-            Navigator.pop(context);
-          },
-          icon: const Icon(Icons.link),
-          label: const Text('Stay connected'),
-        ),
-        FilledButton.icon(
-          style: FilledButton.styleFrom(backgroundColor: Colors.red),
-          onPressed: () {
-            Navigator.pop(context);
-            ble.disconnect();
-          },
-          icon: const Icon(Icons.link_off),
-          label: const Text('Disconnect'),
-        ),
+        Row(children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                  minimumSize: const Size(0, 44)),
+              onPressed: () {
+                ble.resetInactivity();
+                Navigator.pop(context);
+              },
+              icon: const Icon(Icons.link, size: 18),
+              label: const Text('Stay connected'),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: FilledButton.icon(
+              style: FilledButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  minimumSize: const Size(0, 44)),
+              onPressed: () {
+                Navigator.pop(context);
+                ble.disconnect();
+              },
+              icon: const Icon(Icons.link_off, size: 18),
+              label: const Text('Disconnect'),
+            ),
+          ),
+        ]),
       ],
     );
   }
