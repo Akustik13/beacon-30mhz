@@ -418,20 +418,23 @@ class _AppBarStatus extends StatelessWidget {
     required this.beacon,
   });
 
-  // Memory depth from current sensor config (works offline — sensors persist after detach)
+  // Mirror LoggingTab._memoryDepthS(): only the 4 logged sensor IDs, same capacity logic.
   static String _memDepth(BeaconProvider b) {
     if (b.sensors.isEmpty) return '—';
     double wps = 0;
-    for (final s in b.sensors) {
-      if ((s['enabled'] as int? ?? 0) == 1) {
-        final iv = (s['interval_s'] as int? ?? 0);
+    for (final id in [sensorIdTemp, sensorIdLight, sensorIdBatt, sensorIdAccel]) {
+      final s = b.sensorById(id);
+      if (s == null) continue;
+      if ((s['enabled'] ?? 0) == 1) {
+        final iv = s['interval_s'] ?? 0;
         if (iv > 0) wps += 1.0 / iv;
       }
     }
     if (wps == 0) return '∞';
     final total = b.logTotal > 0 ? b.logTotal : logEntriesMax;
     final circ  = b.config?.logOverflow == 1;
-    final cap   = circ ? total : (total - b.logUsed).clamp(0, total);
+    final used  = b.logUsed.clamp(0, total);
+    final cap   = circ ? total : (total - used).clamp(0, total);
     return _fmtSec((cap / wps).round());
   }
 
