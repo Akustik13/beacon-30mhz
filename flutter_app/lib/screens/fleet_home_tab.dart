@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
 import '../providers/ble_provider.dart';
 import '../providers/beacon_provider.dart';
 import '../providers/devices_provider.dart';
+import '../protocol/opcodes.dart';
 import 'home_tab.dart' show HomeTab, RssiChartSheet;
 import 'beacon_tab.dart';
 import 'logging_tab.dart';
@@ -195,6 +197,7 @@ class _BeaconDetailScreenState extends State<_BeaconDetailScreen>
     with TickerProviderStateMixin {
   late TabController _tabs;
   late AnimationController _scanAnim;
+  Timer? _clockTimer;
   bool _connecting = false;
 
   @override
@@ -211,10 +214,17 @@ class _BeaconDetailScreenState extends State<_BeaconDetailScreen>
       vsync: this,
       duration: const Duration(seconds: 2),
     )..repeat();
+    // Rebuild every second so the beacon clock in status box ticks
+    _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
   }
 
   @override
   void dispose() {
+    // Save current tab before disposal so _lastTabPerMac is always up to date
+    widget.onTabChanged?.call(_tabs.index);
+    _clockTimer?.cancel();
     _tabs.dispose();
     _scanAnim.dispose();
     super.dispose();
@@ -248,15 +258,17 @@ class _BeaconDetailScreenState extends State<_BeaconDetailScreen>
 
   @override
   Widget build(BuildContext context) {
-    final ble = context.watch<BleProvider>();
+    final ble         = context.watch<BleProvider>();
+    final beacon      = context.watch<BeaconProvider>();
     final isConnected = ble.isConnected && ble.connectedMac == widget.mac;
-    final rssi = ble.rssi;
-    final rssiColor = rssi > -70
+    final rssi        = ble.rssi;
+    final rssiColor   = rssi > -70
         ? const Color(0xFF4CAF50)
         : rssi > -85 ? const Color(0xFFFFC107) : const Color(0xFFF44336);
 
     return Scaffold(
       appBar: AppBar(
+        toolbarHeight: 60,
         // ── When connected: beacon name + signal live inside the title badge ──
         title: isConnected
             ? GestureDetector(
@@ -296,6 +308,14 @@ class _BeaconDetailScreenState extends State<_BeaconDetailScreen>
               )
             : Text(widget.name),
         actions: [
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 2),
+            child: _AppBarStatus(
+              isConnected: isConnected,
+              tabIdx: _tabs.index,
+              beacon: beacon,
+            ),
+          ),
           if (isConnected)
             // ── Only disconnect button on the right ────────────
             IconButton(
@@ -359,6 +379,125 @@ class _BeaconDetailScreenState extends State<_BeaconDetailScreen>
   }
 }
 
+// ── AppBar status box: temp/bat + time/storage + memory depth ────────────────
+
+class _AppBarStatus extends StatelessWidget {
+  final bool           isConnected;
+  final int            tabIdx;
+  final BeaconProvider beacon;
+  const _AppBarStatus({
+    required this.isConnected,
+    required this.tabIdx,
+    required this.beacon,
+  });
+
+  // Memory depth from current sensor config (works offline — sensors persist after detach)
+  static String _memDepth(BeaconProvider b) {
+    if (b.sensors.isEmpty) return '—';
+    double wps = 0;
+    for (final s in b.sensors) {
+      if ((s['enabled'] as int? ?? 0) == 1) {
+        final iv = (s['interval_s'] as int? ?? 0);
+        if (iv > 0) wps += 1.0 / iv;
+      }
+    }
+    if (wps == 0) return '∞';
+    final total = b.logTotal > 0 ? b.logTotal : logEntriesMax;
+    final circ  = b.config?.logOverflow == 1;
+    final cap   = circ ? total : (total - b.logUsed).clamp(0, total);
+    return _fmtSec((cap / wps).round());
+  }
+
+  static String _fmtSec(int s) {
+    if (s >= 365 * 86400) return '∞';
+    if (s >= 86400) { final d = s ~/ 86400; final h = (s % 86400) ~/ 3600; return h > 0 ? '${d}д ${h}г' : '${d}д'; }
+    if (s >= 3600)  { final h = s ~/ 3600;  final m = (s % 3600) ~/ 60;   return m > 0 ? '${h}г ${m}х' : '${h}г'; }
+    if (s >= 60)    { return '${s ~/ 60}хв'; }
+    return '${s}с';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final on = isConnected;
+    final s  = beacon.status;
+
+    // Row 1: temperature + battery
+    final tempStr = (on && s != null) ? '${s.tempC.toStringAsFixed(1)}°' : '—';
+    final batStr  = (on && s != null) ? '${s.batPct}%' : '—';
+    final batPct  = s?.batPct ?? 100;
+    final batColor = on ? (batPct > 20 ? Colors.green : Colors.red) : Colors.grey;
+
+    // Row 2 left: beacon time (default tabs) or flash usage (Data tab)
+    late String    row2Str;
+    late IconData  row2Icon;
+    late Color     row2Color;
+    if (tabIdx == 2) {
+      final total = beacon.logTotal > 0 ? beacon.logTotal : logEntriesMax;
+      row2Str   = '${beacon.logUsed}/$total';
+      row2Icon  = Icons.sd_storage;
+      row2Color = on ? Colors.blue : Colors.grey;
+    } else {
+      row2Icon  = Icons.schedule;
+      row2Color = on ? Colors.teal : Colors.grey;
+      if (on && beacon.beaconTimeS != null && beacon.beaconTimeReadAt != null) {
+        final el  = DateTime.now().difference(beacon.beaconTimeReadAt!).inSeconds;
+        final now = DateTime.fromMillisecondsSinceEpoch(
+            (beacon.beaconTimeS! + el) * 1000).toLocal();
+        row2Str = '${now.hour.toString().padLeft(2, '0')}:'
+            '${now.minute.toString().padLeft(2, '0')}:'
+            '${now.second.toString().padLeft(2, '0')}';
+      } else {
+        row2Str = '--:--:--';
+      }
+    }
+
+    // Memory depth
+    final memStr   = _memDepth(beacon);
+    final circ     = beacon.config?.logOverflow == 1;
+    final memColor = on ? (circ ? Colors.orange : const Color(0xFF3F51B5)) : Colors.grey;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.grey.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey.withValues(alpha: 0.25)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(Icons.thermostat, size: 11, color: on ? Colors.orange : Colors.grey),
+            const SizedBox(width: 2),
+            Text(tempStr,
+                style: TextStyle(fontSize: 11,
+                    color: on ? null : Colors.grey,
+                    fontWeight: FontWeight.w600)),
+            const SizedBox(width: 7),
+            Icon(Icons.battery_full, size: 11, color: batColor),
+            const SizedBox(width: 2),
+            Text(batStr,
+                style: TextStyle(fontSize: 11, color: on ? null : Colors.grey)),
+          ]),
+          const SizedBox(height: 2),
+          Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(row2Icon, size: 10, color: row2Color),
+            const SizedBox(width: 2),
+            Text(row2Str, style: TextStyle(fontSize: 10, color: row2Color)),
+            const SizedBox(width: 6),
+            Icon(Icons.timelapse, size: 10, color: memColor),
+            const SizedBox(width: 2),
+            Text(memStr,
+                style: TextStyle(fontSize: 10, color: memColor,
+                    fontWeight: FontWeight.w600)),
+          ]),
+        ],
+      ),
+    );
+  }
+}
+
 // ── Compact tab label: icon left of text, single-height row ──────────────────
 
 class _TabLabel extends StatelessWidget {
@@ -385,7 +524,11 @@ class _ManageTab extends StatefulWidget {
   State<_ManageTab> createState() => _ManageTabState();
 }
 
-class _ManageTabState extends State<_ManageTab> with SingleTickerProviderStateMixin {
+class _ManageTabState extends State<_ManageTab>
+    with SingleTickerProviderStateMixin, AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
   late TabController _inner;
 
   @override
@@ -402,6 +545,7 @@ class _ManageTabState extends State<_ManageTab> with SingleTickerProviderStateMi
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     return Column(children: [
       Material(
         color: Theme.of(context).colorScheme.surfaceContainerHighest,

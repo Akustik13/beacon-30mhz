@@ -109,7 +109,8 @@ class BeaconProvider extends ChangeNotifier {
     _refreshTimer?.cancel();
     _refreshTimer = null;
     _t = null;
-    config  = null;
+    // Keep config + sensors so memory-depth calc works offline.
+    // Both are cleared in attach() on the next connection.
     status  = null;
     info    = null;
     bleSettings = null;
