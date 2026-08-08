@@ -13,7 +13,9 @@ class LoggingTab extends StatefulWidget {
   State<LoggingTab> createState() => _LoggingTabState();
 }
 
-class _LoggingTabState extends State<LoggingTab> {
+class _LoggingTabState extends State<LoggingTab> with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
   // Sensor interval form (seconds)
   final Map<int, int> _intervals = {
     sensorIdTemp:  60,
@@ -154,6 +156,7 @@ class _LoggingTabState extends State<LoggingTab> {
 
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final ble    = context.watch<BleProvider>();
     final beacon = context.watch<BeaconProvider>();
 
@@ -167,6 +170,10 @@ class _LoggingTabState extends State<LoggingTab> {
       appBar: AppBar(
         title: const Text('Logging'),
         actions: [
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+            child: _MemDepthBadge(depthStr: depthStr, circular: circular),
+          ),
           if (beacon.isBusy)
             const Padding(padding: EdgeInsets.all(16),
               child: SizedBox(width: 20, height: 20,
@@ -369,6 +376,43 @@ class _LoggingTabState extends State<LoggingTab> {
           SizedBox(height: MediaQuery.of(context).padding.bottom + 24),
         ]),
       ),
+    );
+  }
+}
+
+// ── Memory depth + battery estimate badge (AppBar) ───────────────────────────
+
+class _MemDepthBadge extends StatelessWidget {
+  final String depthStr;
+  final bool   circular;
+  const _MemDepthBadge({required this.depthStr, required this.circular});
+
+  @override
+  Widget build(BuildContext context) {
+    final memColor = circular ? Colors.orange : Colors.indigo;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: memColor.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: memColor.withValues(alpha: 0.35)),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(Icons.timelapse, size: 13, color: memColor),
+        const SizedBox(width: 4),
+        Text(depthStr,
+            style: TextStyle(
+                fontSize: 12,
+                color: memColor,
+                fontWeight: FontWeight.w600)),
+        Container(
+          margin: const EdgeInsets.symmetric(horizontal: 8),
+          width: 1, height: 13,
+          color: Colors.grey.withValues(alpha: 0.4)),
+        Icon(Icons.battery_unknown, size: 13, color: Colors.grey[500]),
+        const SizedBox(width: 3),
+        Text('—', style: TextStyle(fontSize: 12, color: Colors.grey[500])),
+      ]),
     );
   }
 }

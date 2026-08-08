@@ -7,6 +7,8 @@ import '../providers/ble_provider.dart';
 import '../providers/beacon_provider.dart';
 import '../providers/devices_provider.dart';
 import '../protocol/opcodes.dart';
+import '../protocol/info_blob.dart';
+import '../protocol/status_blob.dart';
 
 class HomeTab extends StatefulWidget {
   const HomeTab({super.key});
@@ -15,7 +17,6 @@ class HomeTab extends StatefulWidget {
 }
 
 class _HomeTabState extends State<HomeTab> {
-  bool _chartExpanded    = false;
   bool _syncBannerShown  = false;
 
   @override
@@ -122,6 +123,9 @@ class _HomeTabState extends State<HomeTab> {
                 onTapChart: connected
                     ? (type) => _openChart(context, type, beacon)
                     : null,
+                onTapUptime: (connected && s != null)
+                    ? () => _openUptimeDetail(context, s, beacon.info)
+                    : null,
               ),
             ),
             const SizedBox(height: 10),
@@ -129,24 +133,6 @@ class _HomeTabState extends State<HomeTab> {
             // ── RTC time row ─────────────────────────────────────────────
             if (connected)
               _RtcTimeRow(beacon: beacon),
-
-            // ── Chart expand ─────────────────────────────────────────────
-            Opacity(
-              opacity: connected ? 1.0 : 0.45,
-              child: _ChartExpandRow(
-                expanded: _chartExpanded,
-                onToggle: () => setState(() => _chartExpanded = !_chartExpanded),
-              ),
-            ),
-            if (_chartExpanded) ...[
-              const SizedBox(height: 6),
-              Opacity(
-                opacity: connected ? 1.0 : 0.45,
-                // Bug 2 fix: live-only history, ClipRect, bounded Y
-                child: _TempSparkline(points: beacon.liveTempHistory),
-              ),
-              const SizedBox(height: 8),
-            ],
 
             // ── Storage bar ──────────────────────────────────────────────
             Opacity(
@@ -205,6 +191,16 @@ class _HomeTabState extends State<HomeTab> {
       backgroundColor: Colors.transparent,
       useSafeArea: true,
       builder: (_) => _ChartSheet(type: type, beacon: beacon),
+    );
+  }
+
+  void _openUptimeDetail(BuildContext ctx, StatusBlob s, InfoBlob? info) {
+    showModalBottomSheet(
+      context: ctx,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      useSafeArea: true,
+      builder: (_) => _UptimeDetailSheet(status: s, info: info),
     );
   }
 
@@ -357,8 +353,9 @@ class _ValueCardsGrid extends StatelessWidget {
   final dynamic s;
   final BeaconProvider beacon;
   final void Function(int type)? onTapChart;
+  final VoidCallback? onTapUptime;
   const _ValueCardsGrid({
-    required this.s, required this.beacon, this.onTapChart});
+    required this.s, required this.beacon, this.onTapChart, this.onTapUptime});
 
   @override
   Widget build(BuildContext context) {
@@ -399,6 +396,8 @@ class _ValueCardsGrid extends StatelessWidget {
           value: s != null ? _fmtUptime(s.uptimeS as int) : '—',
           icon: Icons.timer_outlined,
           color: null,
+          onTap: onTapUptime,
+          trailingIcon: Icons.info_outline,
         ),
         _ValueCard(
           label: 'Light',
@@ -425,8 +424,9 @@ class _ValueCard extends StatelessWidget {
   final IconData icon;
   final Color?   color;
   final VoidCallback? onTap;
+  final IconData? trailingIcon;
   const _ValueCard({required this.label, required this.value,
-    required this.icon, this.color, this.onTap});
+    required this.icon, this.color, this.onTap, this.trailingIcon});
 
   @override
   Widget build(BuildContext context) => Card(
@@ -449,103 +449,11 @@ class _ValueCard extends StatelessWidget {
             ],
           )),
           if (onTap != null)
-            Icon(Icons.show_chart_outlined, size: 14, color: Colors.grey[400]),
+            Icon(trailingIcon ?? Icons.show_chart_outlined, size: 14, color: Colors.grey[400]),
         ]),
       ),
     ),
   );
-}
-
-// ── Chart expand row ──────────────────────────────────────────────────────────
-
-class _ChartExpandRow extends StatelessWidget {
-  final bool expanded;
-  final VoidCallback onToggle;
-  const _ChartExpandRow({required this.expanded, required this.onToggle});
-
-  @override
-  Widget build(BuildContext context) => InkWell(
-    onTap: onToggle,
-    borderRadius: BorderRadius.circular(8),
-    child: Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(children: [
-        Icon(expanded ? Icons.expand_less : Icons.expand_more, size: 18,
-            color: Theme.of(context).colorScheme.primary),
-        const SizedBox(width: 6),
-        Text(expanded ? 'Hide temperature chart' : 'Show temperature chart',
-            style: TextStyle(fontSize: 13,
-                color: Theme.of(context).colorScheme.primary)),
-      ]),
-    ),
-  );
-}
-
-// ── Temperature sparkline (Bug 2: ClipRect + live-only history + bounded Y) ──
-
-class _TempSparkline extends StatelessWidget {
-  final List<ChartPoint> points;
-  const _TempSparkline({required this.points});
-
-  @override
-  Widget build(BuildContext context) {
-    if (points.isEmpty) {
-      return Container(
-        height: 120,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: Colors.grey.withValues(alpha: 0.05),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: Colors.grey.withValues(alpha: 0.2)),
-        ),
-        child: const Text('No data', style: TextStyle(color: Colors.grey, fontSize: 13)),
-      );
-    }
-
-    final spots = points.asMap().entries
-        .map((e) => FlSpot(e.key.toDouble(), e.value.value))
-        .toList();
-
-    // Auto-scale Y from live data with ±2°C padding
-    final values = points.map((p) => p.value);
-    final rawMin = values.reduce((a, b) => a < b ? a : b);
-    final rawMax = values.reduce((a, b) => a > b ? a : b);
-    final yMin = (rawMin - 2).clamp(-20.0, 80.0);
-    final yMax = (rawMax + 2).clamp(yMin + 1, 80.0);
-
-    return ClipRect(
-      child: SizedBox(
-        height: 140,
-        child: LineChart(LineChartData(
-          minY: yMin, maxY: yMax,
-          gridData: const FlGridData(show: false),
-          borderData: FlBorderData(show: false),
-          clipData: const FlClipData.all(),
-          titlesData: FlTitlesData(
-            leftTitles: AxisTitles(sideTitles: SideTitles(
-              showTitles: true, reservedSize: 32,
-              getTitlesWidget: (v, _) => Text('${v.round()}°',
-                  style: const TextStyle(fontSize: 10)),
-            )),
-            bottomTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-            topTitles:    const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-            rightTitles:  const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          ),
-          lineBarsData: [LineChartBarData(
-            spots: spots,
-            isCurved: true,
-            color: const Color(0xFF4CAF50),
-            barWidth: 2,
-            dotData: const FlDotData(show: false),
-            belowBarData: BarAreaData(
-              show: true,
-              color: const Color(0xFF4CAF50).withValues(alpha: 0.12),
-            ),
-          )],
-        )),
-      ),
-    );
-  }
 }
 
 // ── Storage bar ───────────────────────────────────────────────────────────────
@@ -604,6 +512,159 @@ class _StorageBar extends StatelessWidget {
       ),
     ]);
   }
+}
+
+// ── Uptime detail bottom sheet ────────────────────────────────────────────────
+
+class _UptimeDetailSheet extends StatelessWidget {
+  final StatusBlob status;
+  final InfoBlob?  info;
+  const _UptimeDetailSheet({required this.status, this.info});
+
+  static String _fmtS(int sec) {
+    if (sec < 60) return '${sec}s';
+    final m = sec ~/ 60;
+    if (m < 60) return '${m}m';
+    final h = m ~/ 60;
+    final rm = m % 60;
+    if (h < 24) return rm > 0 ? '${h}h ${rm}m' : '${h}h';
+    final d = h ~/ 24;
+    final rh = h % 24;
+    return rh > 0 ? '${d}d ${rh}h' : '${d}d';
+  }
+
+  static String _fmtH(int h) {
+    if (h == 0) return '0h';
+    if (h < 24) return '${h}h';
+    final d = h ~/ 24;
+    final rh = h % 24;
+    return rh > 0 ? '${d}d ${rh}h' : '${d}d';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final i       = info;
+    final totalH  = (i?.totalActiveH ?? 0) + (i?.totalStop1H ?? 0) + (i?.totalShutdownH ?? 0);
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      padding: EdgeInsets.fromLTRB(
+          20, 0, 20, MediaQuery.of(context).padding.bottom + 20),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Container(
+          margin: const EdgeInsets.symmetric(vertical: 10),
+          width: 40, height: 4,
+          decoration: BoxDecoration(
+              color: Colors.grey[400], borderRadius: BorderRadius.circular(2))),
+        Row(children: [
+          Icon(Icons.timer_outlined, size: 22,
+              color: Theme.of(context).colorScheme.primary),
+          const SizedBox(width: 10),
+          const Text('Device Uptime',
+              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600)),
+        ]),
+        const SizedBox(height: 16),
+        _UptimeRow(
+          icon: Icons.power_settings_new,
+          color: Theme.of(context).colorScheme.primary,
+          label: 'Current session',
+          value: _fmtS(status.uptimeS),
+          fraction: null,
+        ),
+        const Divider(height: 24),
+        Row(children: [
+          const Icon(Icons.history, size: 15, color: Colors.grey),
+          const SizedBox(width: 6),
+          const Text('Lifetime totals',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          const Spacer(),
+          Text('Total: ${_fmtH(totalH)}',
+              style: TextStyle(fontSize: 12, color: Colors.grey[500])),
+        ]),
+        const SizedBox(height: 12),
+        if (i != null) ...[
+          _UptimeRow(
+            icon: Icons.bolt,
+            color: Colors.green,
+            label: 'Active',
+            value: _fmtH(i.totalActiveH),
+            fraction: totalH > 0 ? i.totalActiveH / totalH : 0.0,
+          ),
+          const SizedBox(height: 10),
+          _UptimeRow(
+            icon: Icons.bedtime_outlined,
+            color: Colors.blue,
+            label: 'Sleep (Stop1)',
+            value: _fmtH(i.totalStop1H),
+            fraction: totalH > 0 ? i.totalStop1H / totalH : 0.0,
+          ),
+          const SizedBox(height: 10),
+          _UptimeRow(
+            icon: Icons.power_off_outlined,
+            color: Colors.blueGrey,
+            label: 'Shutdown',
+            value: _fmtH(i.totalShutdownH),
+            fraction: totalH > 0 ? i.totalShutdownH / totalH : 0.0,
+          ),
+          const SizedBox(height: 14),
+          Row(children: [
+            Icon(Icons.flash_on_outlined, size: 14,
+                color: Colors.orange.withValues(alpha: 0.8)),
+            const SizedBox(width: 6),
+            Text('Flash erase cycles: ${i.flashEraseCount}',
+                style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+          ]),
+        ] else
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Text('Detailed data not loaded yet',
+                style: TextStyle(color: Colors.grey[500], fontSize: 13)),
+          ),
+      ]),
+    );
+  }
+}
+
+class _UptimeRow extends StatelessWidget {
+  final IconData icon;
+  final Color    color;
+  final String   label;
+  final String   value;
+  final double?  fraction;
+  const _UptimeRow({required this.icon, required this.color,
+    required this.label, required this.value, required this.fraction});
+
+  @override
+  Widget build(BuildContext context) => Column(children: [
+    Row(children: [
+      Icon(icon, size: 16, color: color),
+      const SizedBox(width: 8),
+      Text(label, style: TextStyle(fontSize: 13, color: Colors.grey[700])),
+      const Spacer(),
+      Text(value,
+          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+      if (fraction != null) ...[
+        const SizedBox(width: 6),
+        Text('(${(fraction! * 100).round()}%)',
+            style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+      ],
+    ]),
+    if (fraction != null) ...[
+      const SizedBox(height: 4),
+      ClipRRect(
+        borderRadius: BorderRadius.circular(3),
+        child: LinearProgressIndicator(
+          value: fraction,
+          minHeight: 5,
+          backgroundColor: Colors.grey.withValues(alpha: 0.15),
+          valueColor: AlwaysStoppedAnimation(color),
+        ),
+      ),
+    ],
+  ]);
 }
 
 // ── Chart bottom sheet ────────────────────────────────────────────────────────
