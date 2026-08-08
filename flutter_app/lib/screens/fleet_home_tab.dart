@@ -21,8 +21,24 @@ class FleetHomeTab extends StatefulWidget {
   State<FleetHomeTab> createState() => _FleetHomeTabState();
 }
 
-class _FleetHomeTabState extends State<FleetHomeTab> {
+class _FleetHomeTabState extends State<FleetHomeTab> with TickerProviderStateMixin {
   String _query = '';
+  late AnimationController _scanAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _scanAnim = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _scanAnim.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -44,6 +60,17 @@ class _FleetHomeTabState extends State<FleetHomeTab> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Fleet'),
+        actions: [
+          if (ble.isScanning)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
+              child: RotationTransition(
+                turns: _scanAnim,
+                child: Icon(Icons.radar, size: 18,
+                    color: Theme.of(context).colorScheme.primary),
+              ),
+            ),
+        ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(52),
           child: Padding(
@@ -421,40 +448,87 @@ class _AppBarStatus extends StatelessWidget {
     final on = isConnected;
     final s  = beacon.status;
 
-    // Row 1: temperature + battery
-    final tempStr = (on && s != null) ? '${s.tempC.toStringAsFixed(1)}°' : '—';
-    final batStr  = (on && s != null) ? '${s.batPct}%' : '—';
-    final batPct  = s?.batPct ?? 100;
+    final tempStr  = (on && s != null) ? '${s.tempC.toStringAsFixed(1)}°' : '—';
+    final batStr   = (on && s != null) ? '${s.batPct}%' : '—';
+    final batPct   = s?.batPct ?? 100;
     final batColor = on ? (batPct > 20 ? Colors.green : Colors.red) : Colors.grey;
 
-    // Row 2 left: beacon time (default tabs) or flash usage (Data tab)
-    late String    row2Str;
-    late IconData  row2Icon;
-    late Color     row2Color;
-    if (tabIdx == 2) {
-      final total = beacon.logTotal > 0 ? beacon.logTotal : logEntriesMax;
-      row2Str   = '${beacon.logUsed}/$total';
-      row2Icon  = Icons.sd_storage;
-      row2Color = on ? Colors.blue : Colors.grey;
+    Widget row1, row2;
+
+    if (tabIdx == 1) {
+      // ── Config tab: battery days estimate (stub) + memory depth ─────────
+      String batEst = '—';
+      if (on && s != null) {
+        final estDays = (s.batPct / 100 * 365).round();
+        if (estDays >= 330)      batEst = '≥11M';
+        else if (estDays >= 30)  batEst = '~${(estDays / 30).round()}M';
+        else                     batEst = '~${estDays}д';
+      }
+      final memStr   = _memDepth(beacon);
+      final circ     = beacon.config?.logOverflow == 1;
+      final memColor = on ? (circ ? Colors.orange : const Color(0xFF3F51B5)) : Colors.grey;
+
+      row1 = Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(Icons.battery_full, size: 11, color: batColor),
+        const SizedBox(width: 3),
+        Text(batEst,
+            style: TextStyle(fontSize: 11,
+                color: on ? null : Colors.grey,
+                fontWeight: FontWeight.w600)),
+      ]);
+      row2 = Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(Icons.timelapse, size: 10, color: memColor),
+        const SizedBox(width: 2),
+        Text(memStr,
+            style: TextStyle(fontSize: 10, color: memColor,
+                fontWeight: FontWeight.w600)),
+      ]);
+
     } else {
-      row2Icon  = Icons.schedule;
-      row2Color = on ? Colors.teal : Colors.grey;
-      if (on && beacon.beaconTimeS != null && beacon.beaconTimeReadAt != null) {
-        final el  = DateTime.now().difference(beacon.beaconTimeReadAt!).inSeconds;
-        final now = DateTime.fromMillisecondsSinceEpoch(
-            (beacon.beaconTimeS! + el) * 1000).toLocal();
-        row2Str = '${now.hour.toString().padLeft(2, '0')}:'
-            '${now.minute.toString().padLeft(2, '0')}:'
-            '${now.second.toString().padLeft(2, '0')}';
+      // ── Tabs 0 (Overview), 2 (Data), 3 (BLE): row1 = temp + battery ────
+      row1 = Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(Icons.thermostat, size: 11, color: on ? Colors.orange : Colors.grey),
+        const SizedBox(width: 2),
+        Text(tempStr,
+            style: TextStyle(fontSize: 11,
+                color: on ? null : Colors.grey,
+                fontWeight: FontWeight.w600)),
+        const SizedBox(width: 7),
+        Icon(Icons.battery_full, size: 11, color: batColor),
+        const SizedBox(width: 2),
+        Text(batStr,
+            style: TextStyle(fontSize: 11, color: on ? null : Colors.grey)),
+      ]);
+
+      if (tabIdx == 2) {
+        // Data tab: flash storage usage
+        final total = beacon.logTotal > 0 ? beacon.logTotal : logEntriesMax;
+        row2 = Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(Icons.sd_storage, size: 10, color: on ? Colors.blue : Colors.grey),
+          const SizedBox(width: 2),
+          Text('${beacon.logUsed}/$total',
+              style: TextStyle(fontSize: 10,
+                  color: on ? Colors.blue : Colors.grey)),
+        ]);
       } else {
-        row2Str = '--:--:--';
+        // Overview (0) + BLE (3): beacon time HH:mm:ss
+        String timeStr = '--:--:--';
+        if (on && beacon.beaconTimeS != null && beacon.beaconTimeReadAt != null) {
+          final el  = DateTime.now().difference(beacon.beaconTimeReadAt!).inSeconds;
+          final now = DateTime.fromMillisecondsSinceEpoch(
+              (beacon.beaconTimeS! + el) * 1000).toLocal();
+          timeStr = '${now.hour.toString().padLeft(2, '0')}:'
+              '${now.minute.toString().padLeft(2, '0')}:'
+              '${now.second.toString().padLeft(2, '0')}';
+        }
+        row2 = Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(Icons.schedule, size: 10, color: on ? Colors.teal : Colors.grey),
+          const SizedBox(width: 2),
+          Text(timeStr,
+              style: TextStyle(fontSize: 10, color: on ? Colors.teal : Colors.grey)),
+        ]);
       }
     }
-
-    // Memory depth
-    final memStr   = _memDepth(beacon);
-    final circ     = beacon.config?.logOverflow == 1;
-    final memColor = on ? (circ ? Colors.orange : const Color(0xFF3F51B5)) : Colors.grey;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
@@ -466,33 +540,7 @@ class _AppBarStatus extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.thermostat, size: 11, color: on ? Colors.orange : Colors.grey),
-            const SizedBox(width: 2),
-            Text(tempStr,
-                style: TextStyle(fontSize: 11,
-                    color: on ? null : Colors.grey,
-                    fontWeight: FontWeight.w600)),
-            const SizedBox(width: 7),
-            Icon(Icons.battery_full, size: 11, color: batColor),
-            const SizedBox(width: 2),
-            Text(batStr,
-                style: TextStyle(fontSize: 11, color: on ? null : Colors.grey)),
-          ]),
-          const SizedBox(height: 2),
-          Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(row2Icon, size: 10, color: row2Color),
-            const SizedBox(width: 2),
-            Text(row2Str, style: TextStyle(fontSize: 10, color: row2Color)),
-            const SizedBox(width: 6),
-            Icon(Icons.timelapse, size: 10, color: memColor),
-            const SizedBox(width: 2),
-            Text(memStr,
-                style: TextStyle(fontSize: 10, color: memColor,
-                    fontWeight: FontWeight.w600)),
-          ]),
-        ],
+        children: [row1, const SizedBox(height: 2), row2],
       ),
     );
   }
