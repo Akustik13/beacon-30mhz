@@ -192,6 +192,20 @@ class _BeaconDetailScreenState extends State<_BeaconDetailScreen>
   @override
   void dispose() { _tabs.dispose(); super.dispose(); }
 
+  // Hides the inner Scaffold's AppBar toolbar (title row) while keeping
+  // AppBar.bottom (inner TabBar) if the widget has one.
+  Widget _embed(Widget child) => Theme(
+    data: Theme.of(context).copyWith(
+      appBarTheme: Theme.of(context).appBarTheme.copyWith(
+        toolbarHeight: 0,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        shadowColor: Colors.transparent,
+      ),
+    ),
+    child: child,
+  );
+
   Future<void> _connect() async {
     setState(() => _connecting = true);
     final ok = await context.read<BleProvider>()
@@ -288,13 +302,13 @@ class _BeaconDetailScreenState extends State<_BeaconDetailScreen>
       ),
       body: TabBarView(
         controller: _tabs,
-        children: const [
-          HomeTab(),
-          BeaconTab(),
-          LoggingTab(),
-          DataTab(),
-          EventsTab(),
-          DevicesTab(),
+        children: [
+          _embed(const HomeTab()),
+          _embed(const BeaconTab()),
+          _embed(const LoggingTab()),
+          _embed(const DataTab()),
+          _embed(const EventsTab()),
+          _embed(const DevicesTab()),
         ],
       ),
     );
