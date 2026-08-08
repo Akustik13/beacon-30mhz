@@ -179,18 +179,27 @@ class _BeaconDetailScreen extends StatefulWidget {
 }
 
 class _BeaconDetailScreenState extends State<_BeaconDetailScreen>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   late TabController _tabs;
+  late AnimationController _scanAnim;
   bool _connecting = false;
 
   @override
   void initState() {
     super.initState();
     _tabs = TabController(length: 6, vsync: this);
+    _scanAnim = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 2),
+    )..repeat();
   }
 
   @override
-  void dispose() { _tabs.dispose(); super.dispose(); }
+  void dispose() {
+    _tabs.dispose();
+    _scanAnim.dispose();
+    super.dispose();
+  }
 
   // Hides the inner Scaffold's AppBar toolbar (title row) while keeping
   // AppBar.bottom (inner TabBar) if the widget has one.
@@ -277,6 +286,24 @@ class _BeaconDetailScreenState extends State<_BeaconDetailScreen>
               padding: EdgeInsets.all(16),
               child: SizedBox(width: 20, height: 20,
                   child: CircularProgressIndicator(strokeWidth: 2)),
+            )
+          else if (ble.isScanning)
+            // ── Scanning indicator (auto-scan running) ─────────
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                RotationTransition(
+                  turns: _scanAnim,
+                  child: Icon(Icons.radar,
+                      size: 18,
+                      color: Theme.of(context).colorScheme.primary),
+                ),
+                const SizedBox(width: 6),
+                Text('Scanning…',
+                    style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(context).colorScheme.primary)),
+              ]),
             )
           else
             TextButton.icon(
