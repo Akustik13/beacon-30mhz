@@ -8,6 +8,8 @@ import 'home_tab.dart';
 import 'beacon_tab.dart';
 import 'logging_tab.dart';
 import 'data_tab.dart';
+import 'events_tab.dart';
+import 'devices_tab.dart';
 
 /// Fleet dashboard — root screen when layoutMode == 1.
 /// Shows a searchable card list of all saved beacons.
@@ -179,66 +181,113 @@ class _BeaconDetailScreen extends StatefulWidget {
 class _BeaconDetailScreenState extends State<_BeaconDetailScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabs;
+  bool _connecting = false;
 
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 4, vsync: this);
+    _tabs = TabController(length: 6, vsync: this);
   }
 
   @override
   void dispose() { _tabs.dispose(); super.dispose(); }
 
+  Future<void> _connect() async {
+    setState(() => _connecting = true);
+    final ok = await context.read<BleProvider>()
+        .connectByMac(widget.mac, widget.name);
+    if (!mounted) return;
+    setState(() => _connecting = false);
+    if (!ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Connection failed')));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final ble = context.watch<BleProvider>();
     final isConnected = ble.isConnected && ble.connectedMac == widget.mac;
+    final rssi = ble.rssi;
+    final rssiColor = rssi > -70
+        ? const Color(0xFF4CAF50)
+        : rssi > -85 ? const Color(0xFFFFC107) : const Color(0xFFF44336);
 
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.name),
         actions: [
-          if (!isConnected)
-            TextButton.icon(
-              onPressed: () async {
-                final ok = await context.read<BleProvider>()
-                    .connectByMac(widget.mac, widget.name);
-                if (ok && context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Connected to ${widget.name}')));
-                }
-              },
-              icon: const Icon(Icons.bluetooth, size: 16),
-              label: const Text('Connect'),
+          if (isConnected) ...[
+            // ── Connected status pill ──────────────────────────
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.green.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.green.withValues(alpha: 0.45)),
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(Icons.circle, size: 7, color: Colors.green),
+                  const SizedBox(width: 5),
+                  const Text('Connected',
+                      style: TextStyle(
+                          color: Colors.green,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600)),
+                  if (rssi != 0) ...[
+                    const SizedBox(width: 6),
+                    Text('$rssi dBm',
+                        style: TextStyle(color: rssiColor, fontSize: 11)),
+                  ],
+                ]),
+              ),
+            ),
+            // ── Disconnect icon button ─────────────────────────
+            IconButton(
+              icon: const Icon(Icons.link_off),
+              tooltip: 'Disconnect',
+              color: Colors.red,
+              onPressed: () => context.read<BleProvider>().disconnect(),
+            ),
+          ] else if (_connecting)
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: SizedBox(width: 20, height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2)),
             )
           else
             TextButton.icon(
-              onPressed: () async {
-                await context.read<BleProvider>().disconnect();
-              },
-              icon: const Icon(Icons.bluetooth_disabled, size: 16),
-              label: const Text('Disconnect'),
-              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              onPressed: _connect,
+              icon: const Icon(Icons.bluetooth, size: 16),
+              label: const Text('Connect'),
             ),
+          const SizedBox(width: 4),
         ],
         bottom: TabBar(
           controller: _tabs,
+          isScrollable: true,
+          tabAlignment: TabAlignment.start,
           tabs: const [
             Tab(text: 'Overview'),
             Tab(text: 'Beacon'),
             Tab(text: 'Logging'),
             Tab(text: 'Data'),
+            Tab(text: 'Events'),
+            Tab(text: 'BLE'),
           ],
         ),
       ),
       body: TabBarView(
         controller: _tabs,
-        // Reuse the exact same tab content widgets as Focused mode
         children: const [
           HomeTab(),
           BeaconTab(),
           LoggingTab(),
           DataTab(),
+          EventsTab(),
+          DevicesTab(),
         ],
       ),
     );

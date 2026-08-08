@@ -165,8 +165,10 @@ class _MainScreenState extends State<MainScreen> {
     }
     if (!ble.disconnectWarning) _disconnectDialogShown = false;
 
-    // Bug 10: Fleet dashboard mode replaces the Home tab root
+    // Fleet dashboard mode: 3-tab bottom nav (Fleet · Devices · Settings)
+    // Full 7-item IndexedStack preserved so detail screens work unchanged.
     if (app.layoutMode == 1) {
+      final fleetNavIdx = app.tabIndex == 5 ? 1 : app.tabIndex == 6 ? 2 : 0;
       return Scaffold(
         extendBody: true,
         body: IndexedStack(
@@ -177,25 +179,16 @@ class _MainScreenState extends State<MainScreen> {
           ],
         ),
         bottomNavigationBar: NavigationBar(
-          selectedIndex: app.tabIndex.clamp(0, 6),
-          onDestinationSelected: (i) { HapticFeedback.lightImpact(); app.setTabIndex(i); },
+          selectedIndex: fleetNavIdx,
+          onDestinationSelected: (i) {
+            HapticFeedback.lightImpact();
+            app.setTabIndex(i == 1 ? 5 : i == 2 ? 6 : 0);
+          },
           labelBehavior: NavigationDestinationLabelBehavior.onlyShowSelected,
           destinations: const [
             NavigationDestination(
               icon: Icon(Icons.grid_view_outlined),
               selectedIcon: Icon(Icons.grid_view), label: 'Fleet'),
-            NavigationDestination(
-              icon: Icon(Icons.radio_outlined),
-              selectedIcon: Icon(Icons.radio), label: 'Beacon'),
-            NavigationDestination(
-              icon: Icon(Icons.storage_outlined),
-              selectedIcon: Icon(Icons.storage), label: 'Logging'),
-            NavigationDestination(
-              icon: Icon(Icons.show_chart_outlined),
-              selectedIcon: Icon(Icons.show_chart), label: 'Data'),
-            NavigationDestination(
-              icon: Icon(Icons.bolt_outlined),
-              selectedIcon: Icon(Icons.bolt), label: 'Events'),
             NavigationDestination(
               icon: Icon(Icons.bluetooth_outlined),
               selectedIcon: Icon(Icons.bluetooth_connected), label: 'Devices'),
