@@ -71,7 +71,7 @@ class _HomeTabState extends State<HomeTab> {
                 child: CircularProgressIndicator(strokeWidth: 2)))
           else if (connected)
             IconButton(icon: const Icon(Icons.refresh), onPressed: beacon.refreshAll),
-          _RssiChip(rssi: ble.rssi, visible: connected, history: ble.rssiHistory),
+          _RssiChip(rssi: ble.rssi, visible: connected),
         ],
       ),
       body: RefreshIndicator(
@@ -871,9 +871,7 @@ class _StatBadge extends StatelessWidget {
 class _RssiChip extends StatelessWidget {
   final int  rssi;
   final bool visible;
-  final List<({DateTime ts, int rssi})> history;
-  const _RssiChip({
-    required this.rssi, required this.visible, required this.history});
+  const _RssiChip({required this.rssi, required this.visible});
 
   @override
   Widget build(BuildContext context) {
@@ -881,7 +879,7 @@ class _RssiChip extends StatelessWidget {
     final color = rssi > -70 ? const Color(0xFF4CAF50)
         : rssi > -85 ? const Color(0xFFFFC107) : const Color(0xFFF44336);
     return GestureDetector(
-      onTap: () => RssiChartSheet.show(context, history),
+      onTap: () => RssiChartSheet.show(context),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
@@ -900,14 +898,19 @@ class RssiChartSheet extends StatelessWidget {
   final List<({DateTime ts, int rssi})> history;
   const RssiChartSheet({super.key, required this.history});
 
-  static void show(
-      BuildContext context, List<({DateTime ts, int rssi})> history) {
+  static void show(BuildContext context) {
+    final ble = context.read<BleProvider>();
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       useSafeArea: true,
-      builder: (_) => RssiChartSheet(history: history),
+      // ListenableBuilder rebuilds the sheet every time BleProvider notifies
+      // (every 3 s RSSI poll), so the chart stays live without re-opening.
+      builder: (_) => ListenableBuilder(
+        listenable: ble,
+        builder: (_, __) => RssiChartSheet(history: ble.rssiHistory),
+      ),
     );
   }
 

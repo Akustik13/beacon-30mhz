@@ -238,50 +238,54 @@ class _BeaconDetailScreenState extends State<_BeaconDetailScreen>
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.name),
-        actions: [
-          if (isConnected) ...[
-            // ── Connected status pill (tap = RSSI chart) ───────
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
-              child: GestureDetector(
-                onTap: () => RssiChartSheet.show(
-                    context, context.read<BleProvider>().rssiHistory),
+        // ── When connected: beacon name + signal live inside the title badge ──
+        title: isConnected
+            ? GestureDetector(
+                onTap: () => RssiChartSheet.show(context),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
                     color: Colors.green.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: Colors.green.withValues(alpha: 0.45)),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: Colors.green.withValues(alpha: 0.4)),
                   ),
                   child: Row(mainAxisSize: MainAxisSize.min, children: [
                     const Icon(Icons.circle, size: 7, color: Colors.green),
-                    const SizedBox(width: 5),
-                    const Text('Connected',
-                        style: TextStyle(
-                            color: Colors.green,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600)),
-                    if (rssi != 0) ...[
-                      const SizedBox(width: 6),
-                      Text('$rssi dBm',
-                          style: TextStyle(color: rssiColor, fontSize: 11)),
-                      const SizedBox(width: 3),
-                      Icon(Icons.show_chart, size: 12,
-                          color: rssiColor.withValues(alpha: 0.6)),
-                    ],
+                    const SizedBox(width: 8),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(widget.name,
+                            style: const TextStyle(
+                                color: Colors.green,
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold)),
+                        if (rssi != 0)
+                          Row(mainAxisSize: MainAxisSize.min, children: [
+                            Text('$rssi dBm',
+                                style: TextStyle(
+                                    color: rssiColor, fontSize: 11)),
+                            const SizedBox(width: 3),
+                            Icon(Icons.show_chart, size: 11,
+                                color: rssiColor.withValues(alpha: 0.6)),
+                          ]),
+                      ],
+                    ),
                   ]),
                 ),
-              ),
-            ),
-            // ── Disconnect icon button ─────────────────────────
+              )
+            : Text(widget.name),
+        actions: [
+          if (isConnected)
+            // ── Only disconnect button on the right ────────────
             IconButton(
               icon: const Icon(Icons.link_off),
               tooltip: 'Disconnect',
               color: Colors.red,
               onPressed: () => context.read<BleProvider>().disconnect(),
-            ),
-          ] else if (_connecting)
+            )
+          else if (_connecting)
             const Padding(
               padding: EdgeInsets.all(16),
               child: SizedBox(width: 20, height: 20,
