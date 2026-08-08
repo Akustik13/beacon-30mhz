@@ -22,6 +22,11 @@ class BleProvider extends ChangeNotifier {
   bool _isConnected  = false;
   int  _rssi         = 0;
   String _statusMsg  = '';
+
+  // RSSI history — cleared on new connection, capped at 120 points (~6 min)
+  static const _kMaxRssiHistory = 120;
+  final List<({DateTime ts, int rssi})> _rssiHistory = [];
+  List<({DateTime ts, int rssi})> get rssiHistory => List.unmodifiable(_rssiHistory);
   String? _connectedName;
 
   final List<ScannedDevice> _scanResults = [];
@@ -184,9 +189,15 @@ class BleProvider extends ChangeNotifier {
       if (!connected && _isConnected) _onDisconnected();
     });
 
-    // RSSI polling
+    // RSSI polling + history
+    _rssiHistory.clear();
     _rssiTimer = Timer.periodic(const Duration(seconds: 3), (_) async {
-      try { _rssi = await device.readRssi(); notifyListeners(); } catch (_) {}
+      try {
+        _rssi = await device.readRssi();
+        _rssiHistory.add((ts: DateTime.now(), rssi: _rssi));
+        if (_rssiHistory.length > _kMaxRssiHistory) _rssiHistory.removeAt(0);
+        notifyListeners();
+      } catch (_) {}
     });
 
     // Start inactivity timer (reads saved preference)

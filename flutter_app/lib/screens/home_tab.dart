@@ -71,7 +71,7 @@ class _HomeTabState extends State<HomeTab> {
                 child: CircularProgressIndicator(strokeWidth: 2)))
           else if (connected)
             IconButton(icon: const Icon(Icons.refresh), onPressed: beacon.refreshAll),
-          _RssiChip(rssi: ble.rssi, visible: connected),
+          _RssiChip(rssi: ble.rssi, visible: connected, history: ble.rssiHistory),
         ],
       ),
       body: RefreshIndicator(
@@ -871,16 +871,328 @@ class _StatBadge extends StatelessWidget {
 class _RssiChip extends StatelessWidget {
   final int  rssi;
   final bool visible;
-  const _RssiChip({required this.rssi, required this.visible});
+  final List<({DateTime ts, int rssi})> history;
+  const _RssiChip({
+    required this.rssi, required this.visible, required this.history});
 
   @override
   Widget build(BuildContext context) {
     if (!visible) return const SizedBox.shrink();
     final color = rssi > -70 ? const Color(0xFF4CAF50)
         : rssi > -85 ? const Color(0xFFFFC107) : const Color(0xFFF44336);
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
-      child: Text('$rssi dBm', style: TextStyle(color: color, fontSize: 12)),
+    return GestureDetector(
+      onTap: () => RssiChartSheet.show(context, history),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Text('$rssi dBm', style: TextStyle(color: color, fontSize: 12)),
+          const SizedBox(width: 2),
+          Icon(Icons.show_chart, size: 13, color: color.withValues(alpha: 0.6)),
+        ]),
+      ),
     );
   }
+}
+
+// ── RSSI chart bottom sheet (public — reused from fleet detail screen) ─────────
+
+class RssiChartSheet extends StatelessWidget {
+  final List<({DateTime ts, int rssi})> history;
+  const RssiChartSheet({super.key, required this.history});
+
+  static void show(
+      BuildContext context, List<({DateTime ts, int rssi})> history) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      useSafeArea: true,
+      builder: (_) => RssiChartSheet(history: history),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme  = Theme.of(context);
+    final isDark  = theme.brightness == Brightness.dark;
+
+    Widget handle() => Container(
+      margin: const EdgeInsets.symmetric(vertical: 10),
+      width: 40, height: 4,
+      decoration: BoxDecoration(
+        color: Colors.grey[400], borderRadius: BorderRadius.circular(2)),
+    );
+
+    if (history.isEmpty) {
+      return Container(
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surface,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        padding: const EdgeInsets.all(24),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          handle(),
+          const SizedBox(height: 24),
+          Icon(Icons.signal_cellular_off_outlined,
+              size: 48, color: Colors.grey.withValues(alpha: 0.4)),
+          const SizedBox(height: 12),
+          Text('No signal history yet',
+              style: TextStyle(color: Colors.grey[500])),
+          const SizedBox(height: 24),
+        ]),
+      );
+    }
+
+    final vals   = history.map((p) => p.rssi.toDouble()).toList();
+    final minVal = vals.reduce((a, b) => a < b ? a : b);
+    final maxVal = vals.reduce((a, b) => a > b ? a : b);
+    final avgVal = vals.reduce((a, b) => a + b) / vals.length;
+    final lastR  = history.last.rssi;
+
+    final yMin = (minVal - 5).clamp(-110.0, -20.0);
+    final yMax = (maxVal + 5).clamp(-100.0, -20.0);
+
+    final t0    = history.first.ts.millisecondsSinceEpoch / 1000.0;
+    final spots = history.map((p) =>
+        FlSpot(p.ts.millisecondsSinceEpoch / 1000.0 - t0, p.rssi.toDouble())).toList();
+    final xMax  = spots.last.x.clamp(1.0, double.infinity);
+
+    final lineColor = lastR > -70
+        ? const Color(0xFF4CAF50)
+        : lastR > -85 ? const Color(0xFFFFC107) : const Color(0xFFF44336);
+
+    final gridC = isDark
+        ? Colors.white10
+        : Colors.black.withValues(alpha: 0.07);
+    final lblC  = isDark ? Colors.white54 : Colors.black45;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        handle(),
+
+        // ── Header ───────────────────────────────────────────────────
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+          child: Row(children: [
+            const Icon(Icons.signal_cellular_alt, size: 20),
+            const SizedBox(width: 8),
+            const Text('Signal Strength',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+            const Spacer(),
+            _RssiStat('MIN', '${minVal.round()}', Colors.red),
+            const SizedBox(width: 10),
+            _RssiStat('AVG', '${avgVal.round()}', Colors.orange),
+            const SizedBox(width: 10),
+            _RssiStat('MAX', '${maxVal.round()}', Colors.green),
+            Text(' dBm', style: TextStyle(fontSize: 10, color: lblC)),
+          ]),
+        ),
+
+        // ── Chart ────────────────────────────────────────────────────
+        SizedBox(
+          height: 230,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(4, 4, 16, 8),
+            child: LineChart(LineChartData(
+              minX: 0, maxX: xMax,
+              minY: yMin, maxY: yMax,
+              clipData: const FlClipData.all(),
+              rangeAnnotations: RangeAnnotations(
+                horizontalRangeAnnotations: [
+                  HorizontalRangeAnnotation(
+                    y1: -70, y2: yMax,
+                    color: Colors.green.withValues(alpha: 0.07)),
+                  HorizontalRangeAnnotation(
+                    y1: -85, y2: -70,
+                    color: Colors.orange.withValues(alpha: 0.07)),
+                  HorizontalRangeAnnotation(
+                    y1: yMin, y2: -85,
+                    color: Colors.red.withValues(alpha: 0.07)),
+                ],
+              ),
+              extraLinesData: ExtraLinesData(horizontalLines: [
+                HorizontalLine(
+                  y: -70,
+                  color: Colors.green.withValues(alpha: 0.5),
+                  strokeWidth: 1,
+                  dashArray: [6, 4],
+                  label: HorizontalLineLabel(
+                    show: true,
+                    alignment: Alignment.topRight,
+                    labelResolver: (_) => ' −70 good',
+                    style: TextStyle(
+                        fontSize: 9,
+                        color: Colors.green.withValues(alpha: 0.8)),
+                  ),
+                ),
+                HorizontalLine(
+                  y: -85,
+                  color: Colors.red.withValues(alpha: 0.5),
+                  strokeWidth: 1,
+                  dashArray: [6, 4],
+                  label: HorizontalLineLabel(
+                    show: true,
+                    alignment: Alignment.topRight,
+                    labelResolver: (_) => ' −85 weak',
+                    style: TextStyle(
+                        fontSize: 9,
+                        color: Colors.red.withValues(alpha: 0.8)),
+                  ),
+                ),
+              ]),
+              gridData: FlGridData(
+                show: true,
+                getDrawingHorizontalLine: (_) =>
+                    FlLine(color: gridC, strokeWidth: 1),
+                getDrawingVerticalLine: (_) =>
+                    FlLine(color: gridC, strokeWidth: 1, dashArray: [4, 4]),
+              ),
+              borderData: FlBorderData(
+                show: true,
+                border: Border(
+                  left:   BorderSide(color: Colors.grey.withValues(alpha: 0.3)),
+                  bottom: BorderSide(color: Colors.grey.withValues(alpha: 0.3)),
+                  right:  BorderSide.none,
+                  top:    BorderSide.none,
+                ),
+              ),
+              titlesData: FlTitlesData(
+                leftTitles: AxisTitles(sideTitles: SideTitles(
+                  showTitles: true, reservedSize: 40,
+                  getTitlesWidget: (v, meta) {
+                    if (v == meta.min || v == meta.max) {
+                      return const SizedBox.shrink();
+                    }
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 4),
+                      child: Text('${v.round()}',
+                          textAlign: TextAlign.right,
+                          style: TextStyle(fontSize: 10, color: lblC)),
+                    );
+                  },
+                )),
+                bottomTitles: AxisTitles(sideTitles: SideTitles(
+                  showTitles: true, reservedSize: 20,
+                  getTitlesWidget: (v, meta) {
+                    if (v == meta.min || v == meta.max) {
+                      return const SizedBox.shrink();
+                    }
+                    final sec = v.round();
+                    final lbl = sec < 60 ? '${sec}s' : '${sec ~/ 60}m';
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(lbl,
+                          style: TextStyle(fontSize: 9, color: lblC)),
+                    );
+                  },
+                )),
+                rightTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false, reservedSize: 8)),
+                topTitles: const AxisTitles(
+                    sideTitles: SideTitles(showTitles: false, reservedSize: 8)),
+              ),
+              lineBarsData: [
+                LineChartBarData(
+                  spots: spots,
+                  color: lineColor,
+                  barWidth: 2,
+                  isCurved: spots.length > 5,
+                  curveSmoothness: 0.2,
+                  dotData: FlDotData(
+                    show: spots.length <= 30,
+                    getDotPainter: (_, __, ___, ____) => FlDotCirclePainter(
+                      radius: 2.5, color: lineColor,
+                      strokeWidth: 1.5,
+                      strokeColor: Colors.white.withValues(alpha: 0.5)),
+                  ),
+                  belowBarData: BarAreaData(
+                    show: true,
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        lineColor.withValues(alpha: 0.25),
+                        lineColor.withValues(alpha: 0.0),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+              lineTouchData: LineTouchData(
+                touchTooltipData: LineTouchTooltipData(
+                  tooltipRoundedRadius: 8,
+                  getTooltipItems: (ts) => ts.map((s) {
+                    final c = s.y > -70
+                        ? Colors.green
+                        : s.y > -85 ? Colors.orange : Colors.red;
+                    return LineTooltipItem(
+                      '${s.y.round()} dBm',
+                      TextStyle(
+                          color: c,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold),
+                    );
+                  }).toList(),
+                ),
+              ),
+            )),
+          ),
+        ),
+
+        // ── Legend ───────────────────────────────────────────────────
+        Padding(
+          padding: EdgeInsets.fromLTRB(
+              16, 0, 16, MediaQuery.of(context).padding.bottom + 16),
+          child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+            _RssiZone(Colors.green, 'Good  > −70'),
+            const SizedBox(width: 16),
+            _RssiZone(Colors.orange, 'OK  −70…−85'),
+            const SizedBox(width: 16),
+            _RssiZone(Colors.red, 'Weak  < −85'),
+          ]),
+        ),
+      ]),
+    );
+  }
+}
+
+class _RssiStat extends StatelessWidget {
+  final String label, value;
+  final Color  color;
+  const _RssiStat(this.label, this.value, this.color);
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.center,
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Text(label, style: TextStyle(
+          fontSize: 9, color: color.withValues(alpha: 0.75))),
+      Text(value, style: TextStyle(
+          fontSize: 12, fontWeight: FontWeight.bold, color: color)),
+    ],
+  );
+}
+
+class _RssiZone extends StatelessWidget {
+  final Color  color;
+  final String label;
+  const _RssiZone(this.color, this.label);
+
+  @override
+  Widget build(BuildContext context) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Container(
+        width: 8, height: 8,
+        decoration: BoxDecoration(shape: BoxShape.circle, color: color)),
+      const SizedBox(width: 4),
+      Text(label,
+          style: TextStyle(fontSize: 10, color: Colors.grey[600])),
+    ],
+  );
 }
